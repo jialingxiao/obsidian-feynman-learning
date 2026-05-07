@@ -347,3 +347,20 @@
 /* Weak-point drill */
 .feynman-drill { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-left: 3px solid #e07b39; border-radius: 0 8px 8px 0; padding: 12px 14px; margin-top: 12px; }
 .feynman-drill-feedback { margin-top: 12px; }
+
+/* Save filename preview */
+.feynman-save-preview { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-left: 3px solid var(--color-accent); border-radius: 0 8px 8px 0; padding: 12px 14px; margin-top: 12px; }
+
+/* Learning queue card */
+.feynman-queue-list { display: grid; gap: 6px; margin-top: 8px; }
+.feynman-queue-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--background-primary); border-radius: 6px; }
+.feynman-queue-name { font-size: 0.9rem; font-weight: 500; flex: 1; }
+.feynman-queue-btns { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Extract chip layout with add button */
+.feynman-extract-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.feynman-extract-add-all { font-size: 0.75rem; padding: 3px 8px; }
+.feynman-extract-chip { display: flex; align-items: center; gap: 8px; }
+.feynman-extract-chip-info { flex: 1; cursor: pointer; padding: 8px 12px; border-radius: 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); transition: all 0.15s; }
+.feynman-extract-chip-info:hover { border-color: var(--color-accent); }
+.feynman-extract-add { padding: 4px 8px; font-size: 0.85rem; border-radius: 6px; flex-shrink: 0; min-width: 32px; }
