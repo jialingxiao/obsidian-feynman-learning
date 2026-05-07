@@ -10,10 +10,17 @@ import {
   WorkspaceLeaf,
   moment,
 } from "obsidian";
+import {
+  MASTERY_LEVELS,
+  REVIEW_INTERVALS,
+  calcNextInterval,
+  parseApiError,
+  sanitizeFilename,
+  truncate,
+  yamlStr,
+} from "./utils";
 
 const VIEW_TYPE = "feynman-learning-view";
-const REVIEW_INTERVALS = [1, 7, 30];
-const MASTERY_LEVELS = ["初识", "理解", "掌握", "精通"];
 const MASTERY_COLORS: Record<string, string> = {
   "初识": "#aaa", "理解": "#e07b39", "掌握": "#1a6fa8", "精通": "#2d6a4f",
 };
@@ -71,32 +78,6 @@ function emptyState(): FeynmanState {
   };
 }
 
-function truncate(text: string, max = 1900): string {
-  return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
-}
-
-function parseApiError(status: number, body: any): string {
-  const msg: string = body?.error?.message ?? body?.message ?? "";
-  if (status === 401) return "API Key 无效或已过期，请检查设置中的 Key";
-  if (status === 403) return "无权限访问该模型，请检查 Key 或模型名称";
-  if (status === 404) return "接口地址或模型不存在，请检查 API Base URL 和模型名称";
-  if (status === 429) return "请求过于频繁或余额不足，请稍后再试";
-  if (status >= 500)  return "AI 服务暂时不可用，请稍后再试";
-  if (/model/.test(msg))                              return `模型不存在或无权限：${msg}`;
-  if (/quota|balance|insufficient|credit/.test(msg)) return `余额不足：${msg}`;
-  return msg || `请求失败（HTTP ${status}）`;
-}
-
-function sanitizeFilename(name: string): string {
-  return name.replace(/[/\\:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
-}
-
-function yamlStr(value: string): string {
-  if (/[:#\[\]{}&*!|>'"@`]/.test(value) || value.startsWith(" ") || value.endsWith(" ")) {
-    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-  return value;
-}
 
 // ─── View ────────────────────────────────────────────────────────────────────
 
@@ -370,7 +351,7 @@ class FeynmanView extends ItemView {
 
       try {
         const gapsContext = previousGaps ? `\n\n上次学习时记录的知识漏洞：\n${previousGaps}` : "";
-        const verdict = await this.callDeepSeek([
+        const verdict = await this.plugin.callAI([
           {
             role: "system",
             content: `你是一个严格但友善的学习评估老师。学生正在复习「${item.concept}」这个概念。
@@ -427,17 +408,7 @@ class FeynmanView extends ItemView {
         const actionRow = this.btnRow(resultEl);
         if (passed) {
           const nextMastery = MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)];
-          const rawNextDays: number | null = REVIEW_INTERVALS[item.reviewCount + 1] ?? null;
-          let actualNextDays: number | null;
-          if (rawNextDays === null) {
-            actualNextDays = null;
-          } else if (allPerfect) {
-            actualNextDays = Math.round(rawNextDays * 1.3);
-          } else if (partialPass) {
-            actualNextDays = Math.max(1, Math.round(rawNextDays * 0.6));
-          } else {
-            actualNextDays = rawNextDays;
-          }
+          const actualNextDays = calcNextInterval(item.reviewCount, true, partialPass, allPerfect);
 
           let btnLabel: string;
           if (allPerfect && actualNextDays !== null) {
@@ -556,7 +527,7 @@ class FeynmanView extends ItemView {
       if (!text) { new Notice("请先粘贴原文"); return; }
       extractBtn.disabled = true; extractBtn.textContent = "提取中…";
       try {
-        const result = await this.callDeepSeek([
+        const result = await this.plugin.callAI([
           { role: "system", content: "从给定文本中提取3-8个值得用费曼学习法深入理解的核心概念，按建议学习顺序排列。每行一个，格式：「概念名」— 一句话说明为什么值得学。不要编号。" },
           { role: "user", content: text.slice(0, 3000) },
         ], 500);
@@ -703,13 +674,13 @@ class FeynmanView extends ItemView {
   }
 
   private async doAskAI(parent: HTMLElement) {
-    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 DeepSeek API Key"); return; }
+    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 API Key"); return; }
     this.state.aiHistory = [
       { role: "system", content: "你是一个对所有领域都一无所知的普通人，正在听别人解释一个概念。基于对方的解释，找出最让你困惑的地方，提出1-2个追问。用口语化语气，真的从不懂的角度提问，不评价，用中文。" },
       { role: "user", content: `我在解释的概念是：${this.state.concept}\n\n我的解释是：\n${this.state.explanation}` },
     ];
     try {
-      const reply = await this.callDeepSeek(this.state.aiHistory);
+      const reply = await this.plugin.callAI(this.state.aiHistory);
       this.state.aiHistory.push({ role: "assistant", content: reply });
       this.renderAIChat(parent);
     } catch (e: any) { new Notice("AI 请求失败：" + e.message); }
@@ -734,7 +705,7 @@ class FeynmanView extends ItemView {
       this.state.aiHistory.push({ role: "user", content: reply });
       msgEl.textContent = "思考中…";
       try {
-        const aiReply = await this.callDeepSeek(this.state.aiHistory);
+        const aiReply = await this.plugin.callAI(this.state.aiHistory);
         this.state.aiHistory.push({ role: "assistant", content: aiReply });
         msgEl.textContent = aiReply; replyTA.value = "";
       } catch (e: any) { new Notice("AI 请求失败：" + e.message); msgEl.textContent = lastAI.content; }
@@ -743,7 +714,7 @@ class FeynmanView extends ItemView {
     const summaryBtn = this.btn(row, "AI 总结我的漏洞", "warn", async () => {
       summaryBtn.disabled = true; summaryBtn.textContent = "分析中…";
       try {
-        const gaps = await this.callDeepSeek([
+        const gaps = await this.plugin.callAI([
           { role: "system", content: "你是一个学习教练。根据以下对话，列出学生最可能还没搞清楚的3个知识点。格式：每点一行，前面加「·」，简洁，用中文。" },
           { role: "user", content: `概念：${this.state.concept}\n\n对话：\n${this.state.aiHistory.filter(m => m.role !== "system").map(m => `${m.role === "user" ? "学生" : "提问者"}：${m.content}`).join("\n\n")}` },
         ]);
@@ -819,7 +790,7 @@ class FeynmanView extends ItemView {
     verifyCard.createDiv({ cls: "feynman-ai-label", text: "✅ AI 检查漏洞覆盖情况" });
 
     try {
-      const result = await this.callDeepSeek([
+      const result = await this.plugin.callAI([
         {
           role: "system",
           content: "你是一个严格的学习检查员。根据学生之前列出的知识漏洞清单，逐条检查他的最终解释是否覆盖了每个漏洞。每条漏洞输出一行：「· [漏洞简述] → ✓已覆盖 / △部分覆盖 / ✗未覆盖」。最后一行输出：总结：（一句话）",
@@ -935,11 +906,11 @@ class FeynmanView extends ItemView {
   // ─── Step 5: Quiz ─────────────────────────────────────────────────────────
 
   private async startQuiz(parent: HTMLElement) {
-    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 DeepSeek API Key"); return; }
+    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 API Key"); return; }
     const btn = parent.querySelector(".feynman-btn-warn") as HTMLButtonElement;
     if (btn) { btn.disabled = true; btn.textContent = "出题中…"; }
     try {
-      const result = await this.callDeepSeek([
+      const result = await this.plugin.callAI([
         { role: "system", content: "你是一个出题老师，只输出题目，不做任何其他解释。每道题独立一行，格式：1. 题目内容" },
         { role: "user", content: `根据以下关于「${this.state.concept}」的笔记，出3道理解型测验题（考察理解而非死记硬背）：\n${this.state.finalExplanation}\n${this.state.analogy}` },
       ]);
@@ -982,7 +953,7 @@ class FeynmanView extends ItemView {
       this.state.quizAnswers = answers;
       evalBtn.disabled = true; evalBtn.textContent = "AI 评价中…";
       try {
-        const feedback = await this.callDeepSeek([
+        const feedback = await this.plugin.callAI([
           { role: "system", content: "你是一个耐心的老师，给出建设性评价，鼓励为主。用中文。" },
           { role: "user", content: `学生学习的概念是「${this.state.concept}」。请逐题评价（对✓/部分正确△/需改进✗）并给一句话反馈，最后给总体建议。\n\n${this.state.quizQuestions.map((q, i) => `题目${i + 1}：${q}\n学生回答：${this.state.quizAnswers[i]}`).join("\n\n")}` },
         ]);
@@ -996,21 +967,6 @@ class FeynmanView extends ItemView {
   }
 
   // ─── AI & Save helpers ────────────────────────────────────────────────────
-
-  private async callDeepSeek(messages: { role: string; content: string }[], maxTokens = 800): Promise<string> {
-    const { apiKey, apiBase, model, temperature } = this.plugin.settings;
-    const base = apiBase.replace(/\/$/, "");
-    const resp = await fetch(`${base}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-    });
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      throw new Error(parseApiError(resp.status, body));
-    }
-    return (await resp.json()).choices[0].message.content as string;
-  }
 
   private buildNoteContent(date: string): string {
     const reviewDate = moment(date).add(REVIEW_INTERVALS[0], "days").format("YYYY-MM-DD");
@@ -1073,11 +1029,14 @@ ${quizSection}
 
     const content = this.buildNoteContent(date);
     const existing = vault.getAbstractFileByPath(filename);
-    existing instanceof TFile ? await vault.modify(existing, content) : await vault.create(filename, content);
+    const isNew = !(existing instanceof TFile);
+    isNew ? await vault.create(filename, content) : await vault.modify(existing, content);
     this.state.savedStem = stem;
 
-    await this.updateIndex(stem, date);
-    await this.plugin.recordLearningDate();
+    if (isNew) {
+      await this.updateIndex(stem, date);
+      await this.plugin.recordLearningDate();
+    }
 
     // Notion sync
     if (this.plugin.settings.notionToken && this.plugin.settings.notionDatabaseId) {
@@ -1101,7 +1060,7 @@ ${quizSection}
     try {
       const all = this.plugin.getAllConcepts().map(c => c.concept);
       const existing = all.length > 0 ? `（已学过：${all.slice(0, 10).join("、")}，不要重复推荐）` : "";
-      const result = await this.callDeepSeek([
+      const result = await this.plugin.callAI([
         { role: "system", content: "你是一个学习顾问，推荐接下来值得学习的相关概念。只输出概念名称，每个名称一行，共3个，不要编号或解释。" },
         { role: "user", content: `刚学完「${this.state.concept}」${this.state.why ? `，学习动机是：${this.state.why}` : ""}。推荐3个接下来值得学习的相关概念。${existing}` },
       ], 200);
@@ -1180,7 +1139,7 @@ ${quizSection}
     const loadingEl = drillCard.createDiv({ cls: "feynman-hint", text: "AI 生成针对性练习题中…" });
 
     try {
-      const result = await this.callDeepSeek([
+      const result = await this.plugin.callAI([
         {
           role: "system",
           content: "你是一个针对薄弱点出练习题的老师。根据学生存在不足的维度，生成2-3道针对性练习题。要求：每道题聚焦一个薄弱维度，考察理解而非死记硬背，难度适中。格式：每题独立一行，前加「Q：」。",
@@ -1218,7 +1177,7 @@ ${quizSection}
         if (answers.some(a => !a)) { new Notice("请回答所有练习题"); return; }
         submitBtn.disabled = true; submitBtn.textContent = "AI 评价中…";
         try {
-          const feedback = await this.callDeepSeek([
+          const feedback = await this.plugin.callAI([
             {
               role: "system",
               content: "你是一个耐心的学习教练。学生刚完成了针对薄弱维度的专项练习。逐题给出简短评价，重点判断是否真正理解了该薄弱点（用✓/△/✗开头）。最后一行给一句鼓励。用中文，语气友好。",
@@ -1262,7 +1221,7 @@ ${quizSection}
     if (this.plugin.settings.apiKey) {
       try {
         const statsText = `本周新学概念 ${weekData.newConcepts.length} 个（${weekData.newConcepts.map(c => c.concept).join("、") || "无"}），复习 ${weekData.reviews.length} 次，通过率 ${weekData.passRate}，连续学习 ${this.plugin.calcStreak()} 天。`;
-        aiReflection = await this.callDeepSeek([
+        aiReflection = await this.plugin.callAI([
           { role: "system", content: "你是一个温暖的学习教练。根据用户本周的学习数据，写一段简短的学习反思（100字以内），肯定进步，给出下周一个具体的学习建议。用中文，语气轻松友好。" },
           { role: "user", content: statsText },
         ], 300);
@@ -1326,7 +1285,7 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
     card.createDiv({ cls: "feynman-ai-label", text: "🔗 分析关联中…" });
 
     try {
-      const result = await this.callDeepSeek([
+      const result = await this.plugin.callAI([
         { role: "system", content: "你是一个知识关联专家。从给定的已学概念列表中，找出与目标概念最相关的最多3个概念，并用一句话说明关联方式。严格按格式输出，每行：概念名 | 关联说明。不超过3行。如果确实没有相关概念就输出「无」。" },
         { role: "user", content: `目标概念：「${concept}」\n已学概念：${allConcepts.join("、")}` },
       ], 300);
@@ -1418,22 +1377,12 @@ class FeynmanSettingTab extends PluginSettingTab {
         .onChange(async v => { this.plugin.settings.temperature = v; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("测试连接").setDesc("用当前设置发送一次测试请求，确认 Key、地址、模型均正确")
       .addButton(b => b.setButtonText("测试连接").onClick(async () => {
-        const { apiKey, apiBase, model } = this.plugin.settings;
+        const { apiKey, model } = this.plugin.settings;
         if (!apiKey) { new Notice("请先填写 API Key"); return; }
         b.setButtonText("测试中…").setDisabled(true);
         try {
-          const base = apiBase.replace(/\/$/, "");
-          const resp = await fetch(`${base}/chat/completions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-            body: JSON.stringify({ model, messages: [{ role: "user", content: "Hi" }], max_tokens: 1 }),
-          });
-          if (!resp.ok) {
-            const body = await resp.json().catch(() => ({}));
-            throw new Error(parseApiError(resp.status, body));
-          }
-          const data = await resp.json();
-          new Notice(`✓ 连接成功（模型：${data.model ?? model}）`);
+          const data = await this.plugin.requestAI([{ role: "user", content: "Hi" }], 1);
+          new Notice(`✓ 连接成功（模型：${data?.model ?? model}）`);
         } catch (e: any) {
           new Notice(`✗ ${e.message}`);
         } finally {
@@ -1506,6 +1455,23 @@ export default class FeynmanPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
+  async requestAI(messages: { role: string; content: string }[], maxTokens = 800) {
+    const { apiKey, apiBase, model, temperature } = this.settings;
+    const base = apiBase.replace(/\/$/, "");
+    const resp = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(parseApiError(resp.status, body));
+    return body;
+  }
+
+  async callAI(messages: { role: string; content: string }[], maxTokens = 800): Promise<string> {
+    const data = await this.requestAI(messages, maxTokens);
+    return data.choices?.[0]?.message?.content as string;
+  }
   // ─── Data ────────────────────────────────────────────────────────────────
 
   getAllConcepts(): ConceptMeta[] {
@@ -1566,17 +1532,7 @@ export default class FeynmanPlugin extends Plugin {
 
   async markReviewed(file: TFile, currentCount: number, passed: boolean, partialPass = false, expertPass = false) {
     const newCount = passed ? currentCount + 1 : currentCount;
-    let nextInterval: number | null;
-    if (!passed) {
-      nextInterval = 1;
-    } else {
-      nextInterval = REVIEW_INTERVALS[newCount] ?? null;
-      if (expertPass && nextInterval !== null) {
-        nextInterval = Math.round(nextInterval * 1.3);
-      } else if (partialPass && nextInterval !== null) {
-        nextInterval = Math.max(1, Math.round(nextInterval * 0.6));
-      }
-    }
+    const nextInterval = calcNextInterval(currentCount, passed, partialPass, expertPass);
     const nextDate = (passed && nextInterval === null)
       ? "completed"
       : moment().add(nextInterval!, "days").format("YYYY-MM-DD");
