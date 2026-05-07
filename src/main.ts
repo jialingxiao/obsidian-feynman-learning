@@ -33,7 +33,7 @@ const DEFAULT_SETTINGS: FeynmanSettings = {
   notesFolder: "01.读书笔记/费曼笔记",
   indexFile: "01.读书笔记/费曼学习索引.md",
   notionToken: "",
-  notionDatabaseId: "909d83387c17499ebc41e8cf798abb70",
+  notionDatabaseId: "",
 };
 
 interface FeynmanState {
@@ -65,6 +65,17 @@ function emptyState(): FeynmanState {
 
 function truncate(text: string, max = 1900): string {
   return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[/\\:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
+}
+
+function yamlStr(value: string): string {
+  if (/[:#\[\]{}&*!|>'"@`]/.test(value) || value.startsWith(" ") || value.endsWith(" ")) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return value;
 }
 
 // ─── View ────────────────────────────────────────────────────────────────────
@@ -838,7 +849,7 @@ class FeynmanView extends ItemView {
 
     return `---
 tags: [费曼学习法]
-概念: ${this.state.concept}
+概念: ${yamlStr(this.state.concept)}
 日期: ${date}
 掌握程度: 初识
 review_date: ${reviewDate}
@@ -882,7 +893,8 @@ ${quizSection}
     const { vault } = this.app;
     const folder = this.plugin.settings.notesFolder;
     const date = moment().format("YYYY-MM-DD");
-    const filename = `${folder}/${date} ${this.state.concept}.md`;
+    const safeTitle = sanitizeFilename(this.state.concept);
+    const filename = `${folder}/${date} ${safeTitle}.md`;
 
     if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
 
@@ -930,7 +942,7 @@ ${quizSection}
     const { vault } = this.app;
     const file = vault.getAbstractFileByPath(this.plugin.settings.indexFile);
     if (!(file instanceof TFile)) return;
-    const noteLink = `[[${this.plugin.settings.notesFolder}/${date} ${this.state.concept}|${this.state.concept}]]`;
+    const noteLink = `[[${this.plugin.settings.notesFolder}/${date} ${sanitizeFilename(this.state.concept)}|${this.state.concept}]]`;
     const content = await vault.read(file);
     const updated = content.replace(/(\| *\n*$)/m, `| ${noteLink} | | 初识 | 进行中 | ${date} |\n$1`);
     if (updated !== content) await vault.modify(file, updated);
@@ -996,7 +1008,7 @@ ${quizSection}
     }
 
     const conceptSection = weekData.newConcepts.length > 0
-      ? weekData.newConcepts.map(c => `- [[${this.plugin.settings.notesFolder}/${c.date} ${c.concept}|${c.concept}]] · ${c.mastery}`).join("\n")
+      ? weekData.newConcepts.map(c => `- [[${this.plugin.settings.notesFolder}/${c.date} ${sanitizeFilename(c.concept)}|${c.concept}]] · ${c.mastery}`).join("\n")
       : "本周暂无新概念";
 
     const reviewRows = weekData.reviews.map(r =>
@@ -1090,7 +1102,7 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
       const btnRow = card.createDiv("feynman-btn-row");
       this.btn(btnRow, "添加关联链接到笔记", "secondary", async () => {
         const date = moment().format("YYYY-MM-DD");
-        const filename = `${this.plugin.settings.notesFolder}/${date} ${concept}.md`;
+        const filename = `${this.plugin.settings.notesFolder}/${date} ${sanitizeFilename(concept)}.md`;
         const file = this.app.vault.getAbstractFileByPath(filename);
         if (!(file instanceof TFile)) { new Notice("请先保存笔记再添加关联"); return; }
         const content = await this.app.vault.read(file);
