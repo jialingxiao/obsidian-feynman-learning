@@ -92,6 +92,7 @@ class FeynmanView extends ItemView {
   private reviewSort: "due" | "mastery" | "name" = "due";
   private batchMode = false;
   private batchIndex = 0;
+  private batchQueue: DueConcept[] = [];   // frozen snapshot, set when batch starts
 
   constructor(leaf: WorkspaceLeaf, plugin: FeynmanPlugin) {
     super(leaf);
@@ -315,6 +316,7 @@ class FeynmanView extends ItemView {
     // Batch button (only show when ≥2 items)
     if (due.length >= 2) {
       this.btn(controls, "🚀 批量复习", "primary", () => {
+        this.batchQueue = [...due];   // freeze the current sorted list
         this.batchMode = true; this.batchIndex = 0; this.render();
       });
     }
@@ -367,14 +369,14 @@ class FeynmanView extends ItemView {
   // ── Batch review ─────────────────────────────────────────────────────────────
 
   private renderBatchReview(parent: HTMLElement) {
-    const due = this.plugin.getDueConcepts();
+    const due = this.batchQueue;   // frozen at batch-start, never shrinks mid-session
     if (this.batchIndex >= due.length) {
       // Summary screen
       const card = parent.createDiv("feynman-card");
       card.createEl("h2", { text: "🎉 批量复习完成！" });
       card.createDiv({ cls: "feynman-hint", text: `共完成 ${due.length} 个概念的复习` });
       this.btn(this.btnRow(card), "返回首页", "primary", () => {
-        this.batchMode = false; this.batchIndex = 0; this.render();
+        this.batchMode = false; this.batchIndex = 0; this.batchQueue = []; this.render();
       });
       return;
     }
@@ -391,7 +393,7 @@ class FeynmanView extends ItemView {
     const pct = Math.round(this.batchIndex / total * 100);
     barWrap.createDiv({ cls: "feynman-progress-fill", attr: { style: `width:${pct}%` } });
     this.btn(progressHeader, "退出", "secondary", () => {
-      this.batchMode = false; this.batchIndex = 0; this.render();
+      this.batchMode = false; this.batchIndex = 0; this.batchQueue = []; this.render();
     });
 
     // Skip button
@@ -1077,7 +1079,7 @@ class FeynmanView extends ItemView {
   // ─── AI & Save helpers ────────────────────────────────────────────────────
 
   private buildNoteContent(date: string): string {
-    const reviewDate = moment(date).add(REVIEW_INTERVALS[0], "days").format("YYYY-MM-DD");
+    const reviewDate = moment(date).add(this.plugin.settings.reviewIntervals[0] ?? REVIEW_INTERVALS[0], "days").format("YYYY-MM-DD");
     const aiLog = this.state.aiHistory.filter(m => m.role !== "system")
       .map(m => `**${m.role === "user" ? "我" : "AI"}：** ${m.content}`).join("\n\n");
     const quizSection = this.state.quizQuestions.length > 0
@@ -1499,9 +1501,9 @@ class FeynmanSettingTab extends PluginSettingTab {
       }));
 
     containerEl.createEl("h3", { text: "复习设置" });
-    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "间隔梯度（天）：第一次复习 → 第二次 → 第三次。失败时固定明天再试。" });
+    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "三个间隔（天）：保存后多久首次复习、首次通过后多久再复习、再次通过后多久最终复习。失败时固定 1 天后重试。" });
     const ivs = this.plugin.settings.reviewIntervals;
-    const ivLabels = ["初识→理解（天）", "理解→掌握（天）", "掌握→精通（天）"];
+    const ivLabels = ["保存 → 首次复习（天）", "首次通过 → 二次复习（天）", "二次通过 → 三次复习（天）"];
     for (let i = 0; i < 3; i++) {
       new Setting(containerEl).setName(ivLabels[i])
         .addText(t => t
