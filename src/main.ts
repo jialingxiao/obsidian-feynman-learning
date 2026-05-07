@@ -33,7 +33,7 @@ const DEFAULT_SETTINGS: FeynmanSettings = {
   notesFolder: "01.读书笔记/费曼笔记",
   indexFile: "01.读书笔记/费曼学习索引.md",
   notionToken: "",
-  notionDatabaseId: "909d83387c17499ebc41e8cf798abb70",
+  notionDatabaseId: "",
 };
 
 interface FeynmanState {
@@ -65,6 +65,17 @@ function emptyState(): FeynmanState {
 
 function truncate(text: string, max = 1900): string {
   return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[/\\:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
+}
+
+function yamlStr(value: string): string {
+  if (/[:#\[\]{}&*!|>'"@`]/.test(value) || value.startsWith(" ") || value.endsWith(" ")) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return value;
 }
 
 // ─── View ────────────────────────────────────────────────────────────────────
@@ -253,24 +264,41 @@ class FeynmanView extends ItemView {
       this.btn(btns, "打开笔记", "secondary", () => this.app.workspace.getLeaf("tab").openFile(item.file));
 
       if (next !== null) {
-        this.btn(btns, "开始复习 →", "primary", () => {
-          this.renderReviewSession(itemWrap, item);
+        this.btn(btns, "开始复习 →", "primary", async () => {
+          await this.renderReviewSession(itemWrap, item);
         });
       }
     }
   }
 
-  private renderReviewSession(wrap: HTMLElement, item: DueConcept) {
-    // Remove any existing session
+  private async renderReviewSession(wrap: HTMLElement, item: DueConcept) {
     wrap.querySelector(".feynman-review-session")?.remove();
     const session = wrap.createDiv("feynman-review-session");
 
-    session.createDiv({ cls: "feynman-review-session-hint", text: `不看笔记，用自己的话重新解释「${item.concept}」，AI 会判断你是否真正掌握了。` });
+    // Load gaps from previous note
+    let previousGaps = "";
+    try {
+      const content = await this.app.vault.read(item.file);
+      const match = content.match(/## 第二步：知识漏洞\n+([\s\S]*?)(?=\n## )/);
+      previousGaps = match?.[1]?.trim() ?? "";
+      if (previousGaps === "（未填写）") previousGaps = "";
+    } catch { /* file read optional */ }
+
+    session.createDiv({ cls: "feynman-review-session-hint", text: `不看笔记，用自己的话重新解释「${item.concept}」，AI 会从三个维度评判你的掌握程度。` });
+
+    if (previousGaps) {
+      const gapsEl = session.createDiv("feynman-review-gaps");
+      gapsEl.createDiv({ cls: "feynman-ai-label", text: "📌 上次记录的知识漏洞（重点关注这些）" });
+      gapsEl.createDiv({ cls: "feynman-review-session-hint", text: previousGaps });
+    }
+
     const expTA = this.ta(session, "用最简单的语言解释……");
 
-    // Result area (initially hidden)
     const resultEl = session.createDiv("feynman-review-result");
     resultEl.style.display = "none";
+
+    let lastDimensions: { label: string; score: string; note: string }[] = [];
+    let lastEvalText = "";
 
     const row = this.btnRow(session);
     this.btn(row, "取消", "secondary", () => { session.remove(); });
@@ -284,31 +312,57 @@ class FeynmanView extends ItemView {
       resultEl.style.display = "none";
 
       try {
+        const gapsContext = previousGaps ? `\n\n上次学习时记录的知识漏洞：\n${previousGaps}` : "";
         const verdict = await this.callDeepSeek([
           {
             role: "system",
             content: `你是一个严格但友善的学习评估老师。学生正在复习「${item.concept}」这个概念。
-根据他的重新解释，判断他是否真正理解了这个概念。
-输出格式（严格按照此格式，不要增减）：
+从以下三个维度评判，然后给出总体判定。输出格式（严格按照，每行一条）：
+语言简洁：✓ 或 △ 或 ✗（一句话说明）
+核心机制：✓ 或 △ 或 ✗（一句话说明）
+举例说明：✓ 或 △ 或 ✗（一句话说明）
 判定：通过 或 判定：未通过
-评价：（1-2句话，指出理解到位的地方和不足之处）`,
+评价：（1-2句话综合评价）`,
           },
-          { role: "user", content: `学生对「${item.concept}」的重新解释：\n${exp}` },
+          { role: "user", content: `学生对「${item.concept}」的重新解释：\n${exp}${gapsContext}` },
         ]);
 
         const passed = verdict.includes("判定：通过");
-        const evalText = verdict.replace(/判定：(通过|未通过)\n?/, "").replace("评价：", "").trim();
+
+        // Parse dimensions
+        const SCORE_ICON: Record<string, string> = { "✓": "✓", "△": "△", "✗": "✗" };
+        const SCORE_CLS: Record<string, string> = { "✓": "dim-pass", "△": "dim-partial", "✗": "dim-fail" };
+        const dimensions: { label: string; score: string; note: string }[] = [];
+        for (const label of ["语言简洁", "核心机制", "举例说明"]) {
+          const re = new RegExp(`${label}：([✓△✗])(.*)`, "m");
+          const m = verdict.match(re);
+          if (m) dimensions.push({ label, score: m[1], note: m[2].trim() });
+        }
+        const evalText = verdict.match(/评价：([\s\S]*)/)?.[1]?.trim() ?? "";
 
         resultEl.style.display = "block";
         resultEl.empty();
 
-        const resultBadge = resultEl.createDiv({
+        resultEl.createDiv({
           cls: `feynman-verdict ${passed ? "feynman-verdict-pass" : "feynman-verdict-fail"}`,
           text: passed ? "✓ 通过" : "✗ 需要再练习",
         });
-        resultEl.createDiv({ cls: "feynman-verdict-feedback", text: evalText });
 
-        // Record result regardless of outcome
+        if (dimensions.length > 0) {
+          const dimGrid = resultEl.createDiv("feynman-dim-grid");
+          for (const d of dimensions) {
+            const item2 = dimGrid.createDiv(`feynman-dim-item ${SCORE_CLS[d.score] ?? ""}`);
+            item2.createSpan({ cls: "feynman-dim-score", text: d.score });
+            const right = item2.createDiv("feynman-dim-right");
+            right.createSpan({ cls: "feynman-dim-label", text: d.label });
+            if (d.note) right.createSpan({ cls: "feynman-dim-note", text: d.note });
+          }
+        }
+
+        if (evalText) resultEl.createDiv({ cls: "feynman-verdict-feedback", text: evalText });
+
+        lastDimensions = dimensions;
+        lastEvalText = evalText;
         await this.plugin.recordReview(item.concept, passed);
 
         const actionRow = this.btnRow(resultEl);
@@ -326,6 +380,7 @@ class FeynmanView extends ItemView {
         } else {
           this.btn(actionRow, "明天再试", "warn", async () => {
             await this.plugin.markReviewed(item.file, item.reviewCount, false);
+            await this.saveFailedReviewToNote(item.file, lastDimensions, lastEvalText);
             new Notice(`「${item.concept}」明天再复习一次`);
             this.render();
           });
@@ -540,12 +595,13 @@ class FeynmanView extends ItemView {
           { role: "system", content: "你是一个学习教练。根据以下对话，列出学生最可能还没搞清楚的3个知识点。格式：每点一行，前面加「·」，简洁，用中文。" },
           { role: "user", content: `概念：${this.state.concept}\n\n对话：\n${this.state.aiHistory.filter(m => m.role !== "system").map(m => `${m.role === "user" ? "学生" : "提问者"}：${m.content}`).join("\n\n")}` },
         ]);
+        this.state.gaps = gaps; // pre-populate step 2 regardless of which button user clicks
         parent.querySelector(".feynman-gap-summary")?.remove();
         const gc = parent.createDiv("feynman-card feynman-gap-summary");
         gc.createDiv({ cls: "feynman-ai-label", text: "🔍 AI 分析的可能漏洞" });
         gc.createDiv({ cls: "feynman-ai-message", text: gaps });
         const gr = this.btnRow(gc);
-        this.btn(gr, "带着这些漏洞继续 →", "primary", () => { this.state.gaps = gaps; this.state.step = 2; this.render(); });
+        this.btn(gr, "带着这些漏洞继续 →", "primary", () => { this.state.step = 2; this.render(); });
       } catch (e: any) { new Notice("AI 请求失败：" + e.message); }
       finally { summaryBtn.disabled = false; summaryBtn.textContent = "AI 总结我的漏洞"; }
     });
@@ -560,6 +616,13 @@ class FeynmanView extends ItemView {
     this.badge(card, "第二步 · 找出漏洞");
     card.createEl("h2", { text: "哪里还不清楚？" });
     this.hint(card, "诚实列出没说清楚、说错了、或绕开的地方，然后去原材料里补上这些漏洞。");
+
+    if (this.state.explanation) {
+      const ref = card.createEl("details", { cls: "feynman-ref-details" });
+      ref.createEl("summary", { cls: "feynman-ref-summary", text: "📝 查看第一步的原始解释" });
+      ref.createDiv({ cls: "feynman-ref-content", text: this.state.explanation });
+    }
+
     this.lbl(card, "知识漏洞清单");
     const gapsTA = this.ta(card, "例如：\n- 我不知道为什么量子纠缠不能用来传递信息\n- 我对「叠加态」的解释太模糊了", this.state.gaps);
     const row = this.btnRow(card);
@@ -580,14 +643,59 @@ class FeynmanView extends ItemView {
     const analogyTA = this.ta(card, "例如：量子纠缠就像一双手套……", this.state.analogy);
     const row = this.btnRow(card);
     this.btn(row, "← 返回", "secondary", () => { this.state.step = 2; this.render(); });
-    this.btn(row, "完成 →", "primary", () => {
+    const completeBtn = this.btn(row, "完成 →", "primary", async () => {
       const final = finalTA.value.trim();
       if (!final) { new Notice("请写出最终简化版解释"); return; }
       this.state.finalExplanation = final;
       this.state.analogy = analogyTA.value.trim();
-      this.state.step = 4;
-      this.render();
+
+      const gaps = this.state.gaps?.trim();
+      if (gaps && gaps !== "（未填写）") {
+        completeBtn.disabled = true;
+        completeBtn.textContent = "AI 验证中…";
+        await this.verifyGapsCovered(card, completeBtn);
+      } else {
+        this.state.step = 4;
+        this.render();
+      }
     });
+  }
+
+  private async verifyGapsCovered(parent: HTMLElement, triggerBtn: HTMLButtonElement) {
+    parent.querySelector(".feynman-gap-verify")?.remove();
+    const verifyCard = parent.createDiv("feynman-gap-verify");
+    verifyCard.createDiv({ cls: "feynman-ai-label", text: "✅ AI 检查漏洞覆盖情况" });
+
+    try {
+      const result = await this.callDeepSeek([
+        {
+          role: "system",
+          content: "你是一个严格的学习检查员。根据学生之前列出的知识漏洞清单，逐条检查他的最终解释是否覆盖了每个漏洞。每条漏洞输出一行：「· [漏洞简述] → ✓已覆盖 / △部分覆盖 / ✗未覆盖」。最后一行输出：总结：（一句话）",
+        },
+        {
+          role: "user",
+          content: `概念：${this.state.concept}\n\n知识漏洞清单：\n${this.state.gaps}\n\n最终解释：\n${this.state.finalExplanation}`,
+        },
+      ], 400);
+
+      verifyCard.createDiv({ cls: "feynman-ai-message", text: result });
+
+      const allCovered = !result.includes("✗未覆盖");
+      const btnRow = verifyCard.createDiv("feynman-btn-row");
+      this.btn(btnRow, "← 继续完善", "secondary", () => {
+        verifyCard.remove();
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = "完成 →";
+      });
+      this.btn(btnRow, allCovered ? "全部覆盖，完成 →" : "已经够好了，继续 →", "primary", () => {
+        this.state.step = 4;
+        this.render();
+      });
+    } catch (e: any) {
+      verifyCard.createDiv({ cls: "feynman-hint", text: "AI 验证失败：" + e.message });
+      triggerBtn.disabled = false;
+      triggerBtn.textContent = "完成 →";
+    }
   }
 
   // ─── Step 4: Summary ──────────────────────────────────────────────────────
@@ -741,7 +849,7 @@ class FeynmanView extends ItemView {
 
     return `---
 tags: [费曼学习法]
-概念: ${this.state.concept}
+概念: ${yamlStr(this.state.concept)}
 日期: ${date}
 掌握程度: 初识
 review_date: ${reviewDate}
@@ -785,7 +893,8 @@ ${quizSection}
     const { vault } = this.app;
     const folder = this.plugin.settings.notesFolder;
     const date = moment().format("YYYY-MM-DD");
-    const filename = `${folder}/${date} ${this.state.concept}.md`;
+    const safeTitle = sanitizeFilename(this.state.concept);
+    const filename = `${folder}/${date} ${safeTitle}.md`;
 
     if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
 
@@ -833,7 +942,7 @@ ${quizSection}
     const { vault } = this.app;
     const file = vault.getAbstractFileByPath(this.plugin.settings.indexFile);
     if (!(file instanceof TFile)) return;
-    const noteLink = `[[${this.plugin.settings.notesFolder}/${date} ${this.state.concept}|${this.state.concept}]]`;
+    const noteLink = `[[${this.plugin.settings.notesFolder}/${date} ${sanitizeFilename(this.state.concept)}|${this.state.concept}]]`;
     const content = await vault.read(file);
     const updated = content.replace(/(\| *\n*$)/m, `| ${noteLink} | | 初识 | 进行中 | ${date} |\n$1`);
     if (updated !== content) await vault.modify(file, updated);
@@ -861,6 +970,23 @@ ${quizSection}
     if (!resp.ok) { const err = await resp.json(); throw new Error(err.message || resp.statusText); }
   }
 
+  private async saveFailedReviewToNote(
+    file: TFile,
+    dimensions: { label: string; score: string; note: string }[],
+    evalText: string,
+  ) {
+    try {
+      const content = await this.app.vault.read(file);
+      const date = moment().format("YYYY-MM-DD");
+      const dimLines = dimensions.map(d => `  - ${d.label}：${d.score}${d.note ? " — " + d.note : ""}`).join("\n");
+      const entry = `\n### ${date} · ✗ 未通过\n${dimLines}${evalText ? `\n  > ${evalText}` : ""}`;
+      const updated = content.includes("## 复习记录")
+        ? content.replace("## 复习记录", `## 复习记录${entry}`)
+        : content + `\n## 复习记录${entry}\n`;
+      await this.app.vault.modify(file, updated);
+    } catch { /* non-critical */ }
+  }
+
   private async generateWeeklyReport() {
     const weekData = this.plugin.getWeeklyData();
     const isoWeek = moment().isoWeek();
@@ -882,7 +1008,7 @@ ${quizSection}
     }
 
     const conceptSection = weekData.newConcepts.length > 0
-      ? weekData.newConcepts.map(c => `- [[${this.plugin.settings.notesFolder}/${c.date} ${c.concept}|${c.concept}]] · ${c.mastery}`).join("\n")
+      ? weekData.newConcepts.map(c => `- [[${this.plugin.settings.notesFolder}/${c.date} ${sanitizeFilename(c.concept)}|${c.concept}]] · ${c.mastery}`).join("\n")
       : "本周暂无新概念";
 
     const reviewRows = weekData.reviews.map(r =>
@@ -976,7 +1102,7 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
       const btnRow = card.createDiv("feynman-btn-row");
       this.btn(btnRow, "添加关联链接到笔记", "secondary", async () => {
         const date = moment().format("YYYY-MM-DD");
-        const filename = `${this.plugin.settings.notesFolder}/${date} ${concept}.md`;
+        const filename = `${this.plugin.settings.notesFolder}/${date} ${sanitizeFilename(concept)}.md`;
         const file = this.app.vault.getAbstractFileByPath(filename);
         if (!(file instanceof TFile)) { new Notice("请先保存笔记再添加关联"); return; }
         const content = await this.app.vault.read(file);
