@@ -1,0 +1,295 @@
+.feynman-view {
+  padding: 16px;
+  overflow-y: auto;
+  font-family: var(--font-interface);
+}
+
+/* Progress */
+.feynman-progress { margin-bottom: 24px; }
+.feynman-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.feynman-step-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+.feynman-step-label.active { color: var(--color-accent); font-weight: 600; }
+.feynman-step-label.done { color: var(--color-accent); opacity: 0.6; }
+.feynman-progress-bar {
+  height: 4px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.feynman-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* Card */
+.feynman-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.feynman-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+
+/* Badge */
+.feynman-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-accent);
+  background: var(--background-accent-hover);
+  padding: 3px 10px;
+  border-radius: 20px;
+  margin-bottom: 10px;
+}
+
+/* Hint & Tip */
+.feynman-hint {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+.feynman-tip {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--color-yellow);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+/* Label */
+.feynman-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+  margin-top: 12px;
+}
+
+/* Inputs */
+.feynman-input,
+.feynman-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  font-size: 0.88rem;
+  font-family: var(--font-text);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  outline: none;
+  transition: border-color 0.2s;
+  resize: vertical;
+}
+.feynman-input:focus,
+.feynman-textarea:focus { border-color: var(--color-accent); }
+.feynman-textarea { min-height: 100px; }
+
+/* Buttons */
+.feynman-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.feynman-btn {
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+  font-family: var(--font-interface);
+}
+.feynman-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.feynman-btn-primary {
+  background: var(--color-accent);
+  color: var(--text-on-accent);
+}
+.feynman-btn-primary:hover:not(:disabled) { opacity: 0.85; }
+.feynman-btn-secondary {
+  background: transparent;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+.feynman-btn-secondary:hover { background: var(--background-accent-hover); }
+
+/* AI chat */
+.feynman-ai-card { border-left: 3px solid var(--color-accent); }
+.feynman-ai-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-accent);
+  margin-bottom: 8px;
+}
+.feynman-ai-message {
+  background: var(--background-primary);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--text-normal);
+}
+
+/* Summary */
+.feynman-summary-grid { display: grid; gap: 12px; margin-bottom: 16px; }
+.feynman-summary-item label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-accent);
+  display: block;
+  margin-bottom: 3px;
+}
+.feynman-summary-item p {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text-normal);
+}
+
+/* Checklist */
+.feynman-checklist-wrap {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 16px;
+}
+.feynman-checklist-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 10px; }
+.feynman-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: 0.87rem;
+}
+.feynman-check-item:last-child { border-bottom: none; }
+.feynman-check-item input[type="checkbox"] { accent-color: var(--color-accent); }
+
+/* Dashboard */
+.feynman-dashboard { padding-bottom: 16px; }
+.feynman-dashboard-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.feynman-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 16px; }
+.feynman-stat-cell { background: var(--background-primary); border-radius: 8px; padding: 10px 8px; text-align: center; }
+.feynman-stat-value { font-size: 1.4rem; font-weight: 700; color: var(--color-accent); line-height: 1; }
+.feynman-stat-label { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; }
+.feynman-mastery-wrap { margin-top: 4px; }
+.feynman-mastery-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px; }
+.feynman-mastery-bar { height: 8px; border-radius: 4px; overflow: hidden; display: flex; background: var(--background-modifier-border); }
+.feynman-mastery-seg { height: 100%; transition: width 0.4s; }
+.feynman-mastery-legend { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+.feynman-legend-item { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; color: var(--text-muted); }
+.feynman-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* History */
+.feynman-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 10px; }
+.feynman-history-item { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer; gap: 10px; transition: opacity 0.15s; }
+.feynman-history-item:hover { opacity: 0.75; }
+.feynman-history-item:last-child { border-bottom: none; }
+.feynman-history-info { flex: 1; min-width: 0; }
+.feynman-history-name { font-size: 0.9rem; font-weight: 500; display: block; }
+.feynman-history-meta { font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 2px; }
+.feynman-mastery-tag { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; flex-shrink: 0; }
+.feynman-mastery-初识 { background: #eee; color: #666; }
+.feynman-mastery-理解 { background: #fff3e0; color: #e07b39; }
+.feynman-mastery-掌握 { background: #e3f0fb; color: #1a6fa8; }
+.feynman-mastery-精通 { background: #e8f5e9; color: #2d6a4f; }
+
+/* Quiz */
+.feynman-quiz-item { margin-bottom: 16px; }
+.feynman-quiz-q { font-size: 0.9rem; font-weight: 500; margin-bottom: 8px; line-height: 1.6; }
+.feynman-feedback-wrap { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--background-modifier-border); }
+
+/* Gap summary */
+.feynman-gap-summary { border-left: 3px solid var(--color-purple, #8b5cf6); }
+
+/* Warn button */
+.feynman-btn-warn { background: #e07b39; color: white; }
+.feynman-btn-warn:hover:not(:disabled) { opacity: 0.85; }
+
+/* Heatmap */
+.feynman-heatmap-wrap { margin-top: 12px; }
+.feynman-heatmap { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.feynman-heatmap-cell { width: 14px; height: 14px; border-radius: 3px; background: var(--background-modifier-border); transition: background 0.2s; }
+.feynman-heatmap-cell.active { background: var(--color-accent); }
+
+/* Section header */
+.feynman-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.feynman-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 0; }
+
+/* Recommendations */
+.feynman-rec-wrap { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--background-modifier-border); }
+.feynman-rec-card { border-left: 3px solid var(--color-yellow, #f5a623); }
+.feynman-rec-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.feynman-rec-chip { padding: 5px 12px; border-radius: 20px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); font-size: 0.83rem; cursor: pointer; transition: all 0.15s; }
+.feynman-rec-chip:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+/* Concept Browser */
+.feynman-browser-header { display: flex; align-items: center; gap: 12px; padding: 12px 0 16px; }
+.feynman-browser-title { font-size: 1.1rem; font-weight: 700; margin: 0; }
+.feynman-search-input { margin-bottom: 12px; }
+.feynman-filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.feynman-filter-tab { font-size: 0.75rem; padding: 3px 10px; border-radius: 20px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); cursor: pointer; transition: all 0.15s; color: var(--text-muted); }
+.feynman-filter-tab.active { background: var(--color-accent); color: var(--text-on-accent); border-color: var(--color-accent); }
+.feynman-browser-list { display: grid; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.feynman-browser-item { display: flex; align-items: center; justify-content: space-between; padding: 9px 8px; border-radius: 6px; cursor: pointer; gap: 10px; transition: background 0.15s; }
+.feynman-browser-item:hover { background: var(--background-primary); }
+.feynman-browser-info { flex: 1; min-width: 0; }
+.feynman-browser-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.feynman-browser-rate { font-size: 0.72rem; color: var(--text-muted); }
+.feynman-browser-empty { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 24px 0; }
+.feynman-browser-footer { font-size: 0.75rem; color: var(--text-muted); text-align: right; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--background-modifier-border); }
+
+/* Review card */
+.feynman-review-card { border-left: 3px solid #e07b39; }
+.feynman-review-item-wrap { border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 4px; margin-bottom: 4px; }
+.feynman-review-item-wrap:last-child { border-bottom: none; margin-bottom: 0; }
+
+/* Review session (inline) */
+.feynman-review-session { background: var(--background-primary); border-radius: 8px; padding: 14px; margin-top: 8px; }
+.feynman-review-session-hint { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 10px; line-height: 1.6; }
+
+/* Verdict */
+.feynman-review-result { margin-top: 12px; }
+.feynman-verdict { display: inline-block; font-size: 0.85rem; font-weight: 700; padding: 4px 12px; border-radius: 20px; margin-bottom: 8px; }
+.feynman-verdict-pass { background: #e8f5e9; color: #2d6a4f; }
+.feynman-verdict-fail { background: #fff3e0; color: #e07b39; }
+.feynman-verdict-feedback { font-size: 0.87rem; line-height: 1.7; color: var(--text-normal); margin-bottom: 10px; }
+.feynman-review-list { display: grid; gap: 10px; margin-top: 12px; }
+.feynman-review-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  background: var(--background-primary);
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+.feynman-review-info { flex: 1; min-width: 0; }
+.feynman-review-name { font-weight: 600; font-size: 0.92rem; display: block; }
+.feynman-review-sub { font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 2px; }
+.feynman-review-btns { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Settings description */
+.feynman-settings-desc { font-size: 0.83rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; }

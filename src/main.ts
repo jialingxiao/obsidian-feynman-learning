@@ -1,0 +1,1050 @@
+import {
+  App,
+  Editor,
+  ItemView,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  TFile,
+  WorkspaceLeaf,
+  moment,
+} from "obsidian";
+
+const VIEW_TYPE = "feynman-learning-view";
+const REVIEW_INTERVALS = [1, 7, 30];
+const MASTERY_LEVELS = ["初识", "理解", "掌握", "精通"];
+const MASTERY_COLORS: Record<string, string> = {
+  "初识": "#aaa", "理解": "#e07b39", "掌握": "#1a6fa8", "精通": "#2d6a4f",
+};
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface FeynmanSettings {
+  apiKey: string;
+  notesFolder: string;
+  indexFile: string;
+  notionToken: string;
+  notionDatabaseId: string;
+}
+
+const DEFAULT_SETTINGS: FeynmanSettings = {
+  apiKey: "",
+  notesFolder: "01.读书笔记/费曼笔记",
+  indexFile: "01.读书笔记/费曼学习索引.md",
+  notionToken: "",
+  notionDatabaseId: "909d83387c17499ebc41e8cf798abb70",
+};
+
+interface FeynmanState {
+  step: number;
+  concept: string;
+  why: string;
+  explanation: string;
+  aiHistory: { role: string; content: string }[];
+  gaps: string;
+  finalExplanation: string;
+  analogy: string;
+  quizQuestions: string[];
+  quizAnswers: string[];
+  quizFeedback: string;
+  recommendations: string[];
+}
+
+interface DueConcept { file: TFile; concept: string; reviewCount: number; }
+interface ConceptMeta { concept: string; date: string; mastery: string; subject: string; file: TFile; }
+interface ReviewRecord { date: string; concept: string; passed: boolean; }
+
+function emptyState(): FeynmanState {
+  return {
+    step: 0, concept: "", why: "", explanation: "",
+    aiHistory: [], gaps: "", finalExplanation: "", analogy: "",
+    quizQuestions: [], quizAnswers: [], quizFeedback: "", recommendations: [],
+  };
+}
+
+function truncate(text: string, max = 1900): string {
+  return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
+}
+
+// ─── View ────────────────────────────────────────────────────────────────────
+
+class FeynmanView extends ItemView {
+  private plugin: FeynmanPlugin;
+  private state: FeynmanState = emptyState();
+  private browsing = false;
+  private browseSearch = "";
+  private browseFilter = "全部";
+
+  constructor(leaf: WorkspaceLeaf, plugin: FeynmanPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+
+  getViewType() { return VIEW_TYPE; }
+  getDisplayText() { return "费曼学习法"; }
+  getIcon() { return "brain"; }
+
+  async onOpen() { this.render(); }
+  async onClose() {}
+
+  // ─── Core render ──────────────────────────────────────────────────────────
+
+  render() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.addClass("feynman-view");
+
+    if (this.browsing) {
+      this.renderBrowser(containerEl);
+      return;
+    }
+
+    this.renderProgress(containerEl);
+    switch (this.state.step) {
+      case 0: this.renderStep0(containerEl); break;
+      case 1: this.renderStep1(containerEl); break;
+      case 2: this.renderStep2(containerEl); break;
+      case 3: this.renderStep3(containerEl); break;
+      case 4: this.renderStep4(containerEl); break;
+      case 5: this.renderStep5(containerEl); break;
+    }
+  }
+
+  private renderProgress(parent: HTMLElement) {
+    const steps = ["首页", "简单解释", "找出漏洞", "简化类比", "总结", "测验"];
+    const wrap = parent.createDiv("feynman-progress");
+    const labels = wrap.createDiv("feynman-progress-labels");
+    steps.forEach((s, i) => {
+      labels.createSpan({
+        cls: `feynman-step-label ${i === this.state.step ? "active" : i < this.state.step ? "done" : ""}`,
+        text: s,
+      });
+    });
+    const pct = [0, 20, 40, 60, 80, 100][Math.min(this.state.step, 5)];
+    wrap.createDiv("feynman-progress-bar")
+      .createDiv({ cls: "feynman-progress-fill", attr: { style: `width:${pct}%` } });
+  }
+
+  // ─── UI helpers ───────────────────────────────────────────────────────────
+
+  private badge(p: HTMLElement, t: string) { p.createDiv({ cls: "feynman-badge", text: t }); }
+  private hint(p: HTMLElement, t: string) { p.createDiv({ cls: "feynman-hint", text: t }); }
+  private tip(p: HTMLElement, t: string) { p.createDiv({ cls: "feynman-tip", text: t }); }
+  private lbl(p: HTMLElement, t: string) { p.createEl("label", { cls: "feynman-label", text: t }); }
+
+  private ta(p: HTMLElement, placeholder: string, value = ""): HTMLTextAreaElement {
+    const el = p.createEl("textarea", { cls: "feynman-textarea", attr: { placeholder } });
+    el.value = value;
+    return el;
+  }
+
+  private inp(p: HTMLElement, placeholder: string, value = ""): HTMLInputElement {
+    const el = p.createEl("input", { cls: "feynman-input", attr: { type: "text", placeholder } }) as HTMLInputElement;
+    el.value = value;
+    return el;
+  }
+
+  private btnRow(p: HTMLElement) { return p.createDiv("feynman-btn-row"); }
+
+  private btn(p: HTMLElement, text: string, cls: string, onClick: () => void): HTMLButtonElement {
+    const b = p.createEl("button", { cls: `feynman-btn feynman-btn-${cls}`, text });
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // ─── Step 0: Dashboard + History + Start ──────────────────────────────────
+
+  private renderStep0(parent: HTMLElement) {
+    this.renderDashboard(parent);
+    this.renderDueReviews(parent);
+    this.renderHistory(parent);
+    this.renderStartCard(parent);
+  }
+
+  private renderDashboard(parent: HTMLElement) {
+    const stats = this.plugin.getStats();
+    const card = parent.createDiv("feynman-card feynman-dashboard");
+    card.createEl("h3", { cls: "feynman-dashboard-title", text: "学习概览" });
+
+    const reviewStats = this.plugin.getOverallReviewStats();
+    const grid = card.createDiv("feynman-stat-grid");
+    for (const { label, value, sub } of [
+      { label: "已学概念", value: stats.total, sub: `本周 +${stats.thisWeek}` },
+      { label: "待复习", value: stats.dueCount, sub: "" },
+      { label: "连续学习", value: stats.streak + " 天", sub: "" },
+      { label: "复习通过率", value: reviewStats.rate, sub: reviewStats.total > 0 ? `${reviewStats.passed}/${reviewStats.total} 次` : "暂无记录" },
+    ]) {
+      const cell = grid.createDiv("feynman-stat-cell");
+      cell.createDiv({ cls: "feynman-stat-value", text: String(value) });
+      cell.createDiv({ cls: "feynman-stat-label", text: label });
+      if (sub) cell.createDiv({ cls: "feynman-stat-sub", text: sub });
+    }
+
+    // Weekly heatmap (last 14 days)
+    this.renderHeatmap(card);
+
+    // Mastery bar
+    if (stats.total > 0) {
+      const barWrap = card.createDiv("feynman-mastery-wrap");
+      barWrap.createDiv({ cls: "feynman-mastery-label", text: "掌握程度分布" });
+      const bar = barWrap.createDiv("feynman-mastery-bar");
+      for (const [level, color] of Object.entries(MASTERY_COLORS).reverse()) {
+        const count = stats.mastery[level] ?? 0;
+        if (count === 0) continue;
+        bar.createDiv({
+          cls: "feynman-mastery-seg",
+          attr: { style: `width:${(count / stats.total * 100).toFixed(1)}%;background:${color}`, title: `${level}: ${count}` },
+        });
+      }
+      const legend = barWrap.createDiv("feynman-mastery-legend");
+      for (const [level, color] of Object.entries(MASTERY_COLORS).reverse()) {
+        const count = stats.mastery[level] ?? 0;
+        if (count === 0) continue;
+        const item = legend.createSpan({ cls: "feynman-legend-item" });
+        item.createSpan({ cls: "feynman-legend-dot", attr: { style: `background:${color}` } });
+        item.createSpan({ text: `${level} ${count}` });
+      }
+    }
+  }
+
+  private renderHeatmap(parent: HTMLElement) {
+    const wrap = parent.createDiv("feynman-heatmap-wrap");
+    wrap.createDiv({ cls: "feynman-mastery-label", text: "近 14 天学习记录" });
+    const grid = wrap.createDiv("feynman-heatmap");
+    const dates = this.plugin.learningDates;
+    for (let i = 13; i >= 0; i--) {
+      const d = moment().subtract(i, "days").format("YYYY-MM-DD");
+      const active = dates.includes(d);
+      const cell = grid.createDiv({
+        cls: `feynman-heatmap-cell ${active ? "active" : ""}`,
+        attr: { title: d + (active ? " ✓" : "") },
+      });
+    }
+  }
+
+  private renderDueReviews(parent: HTMLElement) {
+    const due = this.plugin.getDueConcepts();
+    if (due.length === 0) return;
+    const card = parent.createDiv("feynman-card feynman-review-card");
+    this.badge(card, `📅 待复习 · ${due.length} 个`);
+    card.createEl("h2", { text: "这些概念到了复习时间" });
+    const list = card.createDiv("feynman-review-list");
+
+    for (const item of due) {
+      const itemWrap = list.createDiv("feynman-review-item-wrap");
+      const row = itemWrap.createDiv("feynman-review-item");
+      const info = row.createDiv("feynman-review-info");
+      info.createSpan({ cls: "feynman-review-name", text: item.concept });
+      const next = REVIEW_INTERVALS[item.reviewCount] ?? null;
+      const rStats = this.plugin.getConceptReviewStats(item.concept);
+      const histText = rStats.total > 0 ? `历史通过率 ${rStats.rate} (${rStats.passed}/${rStats.total})` : "首次复习";
+      info.createSpan({
+        cls: "feynman-review-sub",
+        text: next ? `第 ${item.reviewCount + 1} 次 · 通过升级为「${MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)]}」 · ${histText}` : "已完成所有复习阶段",
+      });
+
+      const btns = row.createDiv("feynman-review-btns");
+      this.btn(btns, "打开笔记", "secondary", () => this.app.workspace.getLeaf("tab").openFile(item.file));
+
+      if (next !== null) {
+        this.btn(btns, "开始复习 →", "primary", () => {
+          this.renderReviewSession(itemWrap, item);
+        });
+      }
+    }
+  }
+
+  private renderReviewSession(wrap: HTMLElement, item: DueConcept) {
+    // Remove any existing session
+    wrap.querySelector(".feynman-review-session")?.remove();
+    const session = wrap.createDiv("feynman-review-session");
+
+    session.createDiv({ cls: "feynman-review-session-hint", text: `不看笔记，用自己的话重新解释「${item.concept}」，AI 会判断你是否真正掌握了。` });
+    const expTA = this.ta(session, "用最简单的语言解释……");
+
+    // Result area (initially hidden)
+    const resultEl = session.createDiv("feynman-review-result");
+    resultEl.style.display = "none";
+
+    const row = this.btnRow(session);
+    this.btn(row, "取消", "secondary", () => { session.remove(); });
+
+    const judgeBtn = this.btn(row, "AI 评判 →", "primary", async () => {
+      const exp = expTA.value.trim();
+      if (!exp) { new Notice("请先写出你的解释"); return; }
+
+      judgeBtn.disabled = true;
+      judgeBtn.textContent = "AI 评判中…";
+      resultEl.style.display = "none";
+
+      try {
+        const verdict = await this.callDeepSeek([
+          {
+            role: "system",
+            content: `你是一个严格但友善的学习评估老师。学生正在复习「${item.concept}」这个概念。
+根据他的重新解释，判断他是否真正理解了这个概念。
+输出格式（严格按照此格式，不要增减）：
+判定：通过 或 判定：未通过
+评价：（1-2句话，指出理解到位的地方和不足之处）`,
+          },
+          { role: "user", content: `学生对「${item.concept}」的重新解释：\n${exp}` },
+        ]);
+
+        const passed = verdict.includes("判定：通过");
+        const evalText = verdict.replace(/判定：(通过|未通过)\n?/, "").replace("评价：", "").trim();
+
+        resultEl.style.display = "block";
+        resultEl.empty();
+
+        const resultBadge = resultEl.createDiv({
+          cls: `feynman-verdict ${passed ? "feynman-verdict-pass" : "feynman-verdict-fail"}`,
+          text: passed ? "✓ 通过" : "✗ 需要再练习",
+        });
+        resultEl.createDiv({ cls: "feynman-verdict-feedback", text: evalText });
+
+        // Record result regardless of outcome
+        await this.plugin.recordReview(item.concept, passed);
+
+        const actionRow = this.btnRow(resultEl);
+        if (passed) {
+          const nextInterval = REVIEW_INTERVALS[item.reviewCount] ?? null;
+          const nextMastery = MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)];
+          this.btn(actionRow, `升级为「${nextMastery}」→`, "primary", async () => {
+            await this.plugin.markReviewed(item.file, item.reviewCount, true);
+            new Notice(nextInterval
+              ? `「${item.concept}」已升级为「${nextMastery}」，${REVIEW_INTERVALS[item.reviewCount + 1] ?? 30} 天后再提醒`
+              : `「${item.concept}」已达到精通！`
+            );
+            this.render();
+          });
+        } else {
+          this.btn(actionRow, "明天再试", "warn", async () => {
+            await this.plugin.markReviewed(item.file, item.reviewCount, false);
+            new Notice(`「${item.concept}」明天再复习一次`);
+            this.render();
+          });
+          this.btn(actionRow, "再解释一次", "secondary", () => {
+            expTA.value = "";
+            resultEl.style.display = "none";
+            judgeBtn.disabled = false;
+            judgeBtn.textContent = "AI 评判 →";
+            expTA.focus();
+          });
+        }
+      } catch (e: any) {
+        new Notice("AI 请求失败：" + e.message);
+        judgeBtn.disabled = false;
+        judgeBtn.textContent = "AI 评判 →";
+      }
+    });
+  }
+
+  private renderHistory(parent: HTMLElement) {
+    const concepts = this.plugin.getRecentConcepts(5);
+    if (concepts.length === 0) return;
+    const card = parent.createDiv("feynman-card");
+    const header = card.createDiv("feynman-section-header");
+    header.createEl("h3", { cls: "feynman-section-title", text: "最近学习" });
+    this.btn(header, "📚 概念库", "secondary", () => { this.browsing = true; this.render(); });
+
+    for (const c of concepts) {
+      const row = card.createDiv("feynman-history-item");
+      const info = row.createDiv("feynman-history-info");
+      info.createSpan({ cls: "feynman-history-name", text: c.concept });
+      info.createSpan({ cls: "feynman-history-meta", text: `${c.date}  ·  ${c.mastery}` });
+      row.createDiv({ cls: `feynman-mastery-tag feynman-mastery-${c.mastery}`, text: c.mastery });
+      row.addEventListener("click", () => this.app.workspace.getLeaf("tab").openFile(c.file));
+    }
+  }
+
+  private renderStartCard(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card");
+    this.badge(card, "开始新概念");
+    card.createEl("h2", { text: "你想学什么概念？" });
+    this.hint(card, "费曼学习法：选概念 → 简单解释 → 找漏洞 → 简化总结 → AI 测验");
+
+    this.lbl(card, "概念名称");
+    const nameInp = this.inp(card, "例如：量子纠缠、复利、贝叶斯定理……", this.state.concept);
+    this.lbl(card, "学习动机（可选）");
+    const whyInp = this.inp(card, "例如：想理解为什么巴菲特说复利是第八大奇迹", this.state.why);
+
+    // Show AI recommendations if any
+    if (this.state.recommendations.length > 0) {
+      const recCard = card.createDiv("feynman-rec-wrap");
+      recCard.createDiv({ cls: "feynman-ai-label", text: "💡 AI 推荐接下来学" });
+      for (const rec of this.state.recommendations) {
+        const chip = recCard.createDiv({ cls: "feynman-rec-chip", text: rec });
+        chip.addEventListener("click", () => { nameInp.value = rec; });
+      }
+    }
+
+    const row = this.btnRow(card);
+    this.btn(row, "开始学习 →", "primary", () => {
+      const name = nameInp.value.trim();
+      if (!name) { new Notice("请输入概念名称"); return; }
+      this.state.concept = name;
+      this.state.why = whyInp.value.trim();
+      this.state.step = 1;
+      this.render();
+    });
+  }
+
+  // ─── Concept Browser ──────────────────────────────────────────────────────
+
+  private renderBrowser(parent: HTMLElement) {
+    const header = parent.createDiv("feynman-browser-header");
+    this.btn(header, "← 返回", "secondary", () => { this.browsing = false; this.render(); });
+    header.createEl("h2", { cls: "feynman-browser-title", text: "概念库" });
+
+    const card = parent.createDiv("feynman-card");
+
+    // Search input
+    const searchInp = card.createEl("input", {
+      cls: "feynman-input feynman-search-input",
+      attr: { type: "text", placeholder: "搜索概念名称…" },
+    }) as HTMLInputElement;
+    searchInp.value = this.browseSearch;
+
+    // Filter tabs
+    const filters = card.createDiv("feynman-filter-tabs");
+    const filterList = ["全部", ...MASTERY_LEVELS];
+    for (const f of filterList) {
+      const tab = filters.createDiv({
+        cls: `feynman-filter-tab ${this.browseFilter === f ? "active" : ""}`,
+        text: f,
+      });
+      tab.addEventListener("click", () => { this.browseFilter = f; renderList(); });
+    }
+
+    // Results container
+    const listEl = card.createDiv("feynman-browser-list");
+
+    const renderList = () => {
+      listEl.empty();
+      const search = searchInp.value.trim().toLowerCase();
+      const all = this.plugin.getAllConcepts();
+      const filtered = all.filter(c => {
+        const matchSearch = !search || c.concept.toLowerCase().includes(search);
+        const matchFilter = this.browseFilter === "全部" || c.mastery === this.browseFilter;
+        return matchSearch && matchFilter;
+      });
+
+      // Update filter tab counts
+      filters.querySelectorAll(".feynman-filter-tab").forEach((el, i) => {
+        const f = filterList[i];
+        const count = f === "全部" ? all.length : all.filter(c => c.mastery === f).length;
+        el.textContent = `${f} ${count}`;
+        el.classList.toggle("active", this.browseFilter === f);
+      });
+
+      if (filtered.length === 0) {
+        listEl.createDiv({ cls: "feynman-browser-empty", text: search ? `没有找到「${search}」` : "还没有任何概念" });
+        return;
+      }
+
+      for (const c of filtered) {
+        const row = listEl.createDiv("feynman-browser-item");
+        const info = row.createDiv("feynman-browser-info");
+        info.createSpan({ cls: "feynman-history-name", text: c.concept });
+        info.createSpan({ cls: "feynman-history-meta", text: `${c.date}  ·  ${c.subject || ""}` });
+        const right = row.createDiv("feynman-browser-right");
+        const rStat = this.plugin.getConceptReviewStats(c.concept);
+        if (rStat.total > 0) right.createDiv({ cls: "feynman-browser-rate", text: rStat.rate });
+        right.createDiv({ cls: `feynman-mastery-tag feynman-mastery-${c.mastery}`, text: c.mastery });
+        row.addEventListener("click", () => this.app.workspace.getLeaf("tab").openFile(c.file));
+      }
+    };
+
+    searchInp.addEventListener("input", () => { this.browseSearch = searchInp.value; renderList(); });
+    renderList();
+
+    // Stats footer
+    const all = this.plugin.getAllConcepts();
+    card.createDiv({ cls: "feynman-browser-footer", text: `共 ${all.length} 个概念` });
+  }
+
+  // ─── Step 1 ───────────────────────────────────────────────────────────────
+
+  private renderStep1(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card");
+    this.badge(card, "第一步 · 简单解释");
+    card.createEl("h2", { text: `解释「${this.state.concept}」` });
+    this.tip(card, "💡 假设你在向一个完全不懂的朋友解释。不能用术语，只用日常语言，想到什么写什么。");
+
+    this.lbl(card, "我的解释");
+    const expTA = this.ta(card, "用自己的话写出来……", this.state.explanation);
+
+    const row = this.btnRow(card);
+    this.btn(row, "← 返回", "secondary", () => { this.state.step = 0; this.render(); });
+    const aiBtn = this.btn(row, "让 AI 来追问我 →", "primary", async () => {
+      const exp = expTA.value.trim();
+      if (!exp) { new Notice("请先写出你的解释"); return; }
+      this.state.explanation = exp;
+      this.state.aiHistory = [];
+      aiBtn.disabled = true; aiBtn.textContent = "AI 思考中…";
+      await this.doAskAI(parent);
+      aiBtn.disabled = false; aiBtn.textContent = "再次追问";
+    });
+
+    if (this.state.aiHistory.length > 0) this.renderAIChat(parent);
+  }
+
+  private async doAskAI(parent: HTMLElement) {
+    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 DeepSeek API Key"); return; }
+    this.state.aiHistory = [
+      { role: "system", content: "你是一个对所有领域都一无所知的普通人，正在听别人解释一个概念。基于对方的解释，找出最让你困惑的地方，提出1-2个追问。用口语化语气，真的从不懂的角度提问，不评价，用中文。" },
+      { role: "user", content: `我在解释的概念是：${this.state.concept}\n\n我的解释是：\n${this.state.explanation}` },
+    ];
+    try {
+      const reply = await this.callDeepSeek(this.state.aiHistory);
+      this.state.aiHistory.push({ role: "assistant", content: reply });
+      this.renderAIChat(parent);
+    } catch (e: any) { new Notice("AI 请求失败：" + e.message); }
+  }
+
+  private renderAIChat(parent: HTMLElement) {
+    parent.querySelector(".feynman-ai-card")?.remove();
+    const card = parent.createDiv("feynman-card feynman-ai-card");
+    const lastAI = [...this.state.aiHistory].reverse().find(m => m.role === "assistant");
+    if (!lastAI) return;
+
+    card.createDiv({ cls: "feynman-ai-label", text: "🤖 AI 扮演「完全不懂的人」" });
+    const msgEl = card.createDiv({ cls: "feynman-ai-message", text: lastAI.content });
+
+    this.lbl(card, "我的回答");
+    const replyTA = this.ta(card, "回答 AI 的追问……");
+
+    const row = this.btnRow(card);
+    this.btn(row, "继续追问", "secondary", async () => {
+      const reply = replyTA.value.trim();
+      if (!reply) { new Notice("请先回答 AI 的问题"); return; }
+      this.state.aiHistory.push({ role: "user", content: reply });
+      msgEl.textContent = "思考中…";
+      try {
+        const aiReply = await this.callDeepSeek(this.state.aiHistory);
+        this.state.aiHistory.push({ role: "assistant", content: aiReply });
+        msgEl.textContent = aiReply; replyTA.value = "";
+      } catch (e: any) { new Notice("AI 请求失败：" + e.message); msgEl.textContent = lastAI.content; }
+    });
+
+    const summaryBtn = this.btn(row, "AI 总结我的漏洞", "warn", async () => {
+      summaryBtn.disabled = true; summaryBtn.textContent = "分析中…";
+      try {
+        const gaps = await this.callDeepSeek([
+          { role: "system", content: "你是一个学习教练。根据以下对话，列出学生最可能还没搞清楚的3个知识点。格式：每点一行，前面加「·」，简洁，用中文。" },
+          { role: "user", content: `概念：${this.state.concept}\n\n对话：\n${this.state.aiHistory.filter(m => m.role !== "system").map(m => `${m.role === "user" ? "学生" : "提问者"}：${m.content}`).join("\n\n")}` },
+        ]);
+        parent.querySelector(".feynman-gap-summary")?.remove();
+        const gc = parent.createDiv("feynman-card feynman-gap-summary");
+        gc.createDiv({ cls: "feynman-ai-label", text: "🔍 AI 分析的可能漏洞" });
+        gc.createDiv({ cls: "feynman-ai-message", text: gaps });
+        const gr = this.btnRow(gc);
+        this.btn(gr, "带着这些漏洞继续 →", "primary", () => { this.state.gaps = gaps; this.state.step = 2; this.render(); });
+      } catch (e: any) { new Notice("AI 请求失败：" + e.message); }
+      finally { summaryBtn.disabled = false; summaryBtn.textContent = "AI 总结我的漏洞"; }
+    });
+
+    this.btn(row, "已找到漏洞 →", "primary", () => { this.state.step = 2; this.render(); });
+  }
+
+  // ─── Step 2 ───────────────────────────────────────────────────────────────
+
+  private renderStep2(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card");
+    this.badge(card, "第二步 · 找出漏洞");
+    card.createEl("h2", { text: "哪里还不清楚？" });
+    this.hint(card, "诚实列出没说清楚、说错了、或绕开的地方，然后去原材料里补上这些漏洞。");
+    this.lbl(card, "知识漏洞清单");
+    const gapsTA = this.ta(card, "例如：\n- 我不知道为什么量子纠缠不能用来传递信息\n- 我对「叠加态」的解释太模糊了", this.state.gaps);
+    const row = this.btnRow(card);
+    this.btn(row, "← 返回", "secondary", () => { this.state.step = 1; this.render(); });
+    this.btn(row, "漏洞已补全 →", "primary", () => { this.state.gaps = gapsTA.value.trim(); this.state.step = 3; this.render(); });
+  }
+
+  // ─── Step 3 ───────────────────────────────────────────────────────────────
+
+  private renderStep3(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card");
+    this.badge(card, "第三步 · 简化与类比");
+    card.createEl("h2", { text: "用最简单的方式重新解释" });
+    this.hint(card, "把解释精简到核心，加入类比或故事，让一个 10 岁的孩子也能听懂。");
+    this.lbl(card, "最终简化版解释");
+    const finalTA = this.ta(card, "把概念解释到极简……", this.state.finalExplanation);
+    this.lbl(card, "类比 / 故事 / 例子");
+    const analogyTA = this.ta(card, "例如：量子纠缠就像一双手套……", this.state.analogy);
+    const row = this.btnRow(card);
+    this.btn(row, "← 返回", "secondary", () => { this.state.step = 2; this.render(); });
+    this.btn(row, "完成 →", "primary", () => {
+      const final = finalTA.value.trim();
+      if (!final) { new Notice("请写出最终简化版解释"); return; }
+      this.state.finalExplanation = final;
+      this.state.analogy = analogyTA.value.trim();
+      this.state.step = 4;
+      this.render();
+    });
+  }
+
+  // ─── Step 4: Summary ──────────────────────────────────────────────────────
+
+  private renderStep4(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card");
+    this.badge(card, "完成 🎉");
+    card.createEl("h2", { text: `「${this.state.concept}」学习总结` });
+
+    const grid = card.createDiv("feynman-summary-grid");
+    for (const { label, value } of [
+      { label: "概念", value: this.state.concept + (this.state.why ? `\n学习动机：${this.state.why}` : "") },
+      { label: "第一步解释", value: this.state.explanation },
+      { label: "知识漏洞", value: this.state.gaps || "（未填写）" },
+      { label: "最终简化版", value: this.state.finalExplanation },
+      { label: "类比 / 例子", value: this.state.analogy || "（未填写）" },
+    ]) {
+      const row = grid.createDiv("feynman-summary-item");
+      row.createEl("label", { text: label });
+      row.createEl("p", { text: value });
+    }
+
+    const checkWrap = card.createDiv("feynman-checklist-wrap");
+    checkWrap.createEl("p", { cls: "feynman-checklist-title", text: "自检清单" });
+    for (const c of ["我能不看笔记解释这个概念", "我的解释全程没有用术语", "我知道自己哪里还不够懂", "我能举一个现实中的例子", "我能回答「为什么」这个概念是这样的"]) {
+      const li = checkWrap.createDiv("feynman-check-item");
+      li.createEl("input", { attr: { type: "checkbox" } });
+      li.createSpan({ text: c });
+    }
+
+    const row = this.btnRow(card);
+    const saveBtn = this.btn(row, "💾 保存到 vault", "primary", async () => {
+      saveBtn.disabled = true; saveBtn.textContent = "保存中…";
+      await this.saveNote(parent);
+      saveBtn.disabled = false; saveBtn.textContent = "💾 已保存";
+    });
+    this.btn(row, "🧪 AI 测验", "warn", async () => { await this.startQuiz(parent); });
+    this.btn(row, "📋 复制", "secondary", () => {
+      navigator.clipboard.writeText(this.buildNoteContent(moment().format("YYYY-MM-DD")));
+      new Notice("笔记已复制到剪贴板");
+    });
+    this.btn(row, "学下一个 →", "secondary", () => { this.state = emptyState(); this.render(); });
+
+    // Show recommendations if already fetched
+    if (this.state.recommendations.length > 0) {
+      this.renderRecommendations(parent);
+    }
+  }
+
+  private renderRecommendations(parent: HTMLElement) {
+    parent.querySelector(".feynman-rec-card")?.remove();
+    const card = parent.createDiv("feynman-card feynman-rec-card");
+    card.createDiv({ cls: "feynman-ai-label", text: "💡 接下来可以学" });
+    const chips = card.createDiv("feynman-rec-chips");
+    for (const rec of this.state.recommendations) {
+      const chip = chips.createDiv({ cls: "feynman-rec-chip", text: rec });
+      chip.addEventListener("click", () => {
+        this.state = emptyState();
+        this.state.concept = rec;
+        this.state.step = 1;
+        this.render();
+      });
+    }
+  }
+
+  // ─── Step 5: Quiz ─────────────────────────────────────────────────────────
+
+  private async startQuiz(parent: HTMLElement) {
+    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 DeepSeek API Key"); return; }
+    const btn = parent.querySelector(".feynman-btn-warn") as HTMLButtonElement;
+    if (btn) { btn.disabled = true; btn.textContent = "出题中…"; }
+    try {
+      const result = await this.callDeepSeek([
+        { role: "system", content: "你是一个出题老师，只输出题目，不做任何其他解释。每道题独立一行，格式：1. 题目内容" },
+        { role: "user", content: `根据以下关于「${this.state.concept}」的笔记，出3道理解型测验题（考察理解而非死记硬背）：\n${this.state.finalExplanation}\n${this.state.analogy}` },
+      ]);
+      this.state.quizQuestions = result.split("\n").filter(l => l.trim().match(/^\d+\./)).map(l => l.replace(/^\d+\.\s*/, "").trim()).slice(0, 3);
+      if (this.state.quizQuestions.length === 0) this.state.quizQuestions = result.split("\n").filter(l => l.trim()).slice(0, 3);
+      this.state.quizAnswers = new Array(this.state.quizQuestions.length).fill("");
+      this.state.quizFeedback = "";
+      this.state.step = 5;
+      this.render();
+    } catch (e: any) {
+      new Notice("AI 请求失败：" + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = "🧪 AI 测验"; }
+    }
+  }
+
+  private renderStep5(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card");
+    this.badge(card, "🧪 AI 测验");
+    card.createEl("h2", { text: `测验：「${this.state.concept}」` });
+    this.hint(card, "用自己的话回答，不用追求完美，AI 会给出反馈。");
+
+    const answerEls: HTMLTextAreaElement[] = [];
+    this.state.quizQuestions.forEach((q, i) => {
+      const qWrap = card.createDiv("feynman-quiz-item");
+      qWrap.createDiv({ cls: "feynman-quiz-q", text: `${i + 1}. ${q}` });
+      answerEls.push(this.ta(qWrap, "写下你的回答……", this.state.quizAnswers[i] || ""));
+    });
+
+    if (this.state.quizFeedback) {
+      const fb = card.createDiv("feynman-feedback-wrap");
+      fb.createDiv({ cls: "feynman-ai-label", text: "📝 AI 评价" });
+      fb.createDiv({ cls: "feynman-ai-message", text: this.state.quizFeedback });
+    }
+
+    const row = this.btnRow(card);
+    this.btn(row, "← 返回总结", "secondary", () => { this.state.step = 4; this.render(); });
+    const evalBtn = this.btn(row, "提交，让 AI 评价", "primary", async () => {
+      const answers = answerEls.map(el => el.value.trim());
+      if (answers.some(a => !a)) { new Notice("请回答所有问题"); return; }
+      this.state.quizAnswers = answers;
+      evalBtn.disabled = true; evalBtn.textContent = "AI 评价中…";
+      try {
+        const feedback = await this.callDeepSeek([
+          { role: "system", content: "你是一个耐心的老师，给出建设性评价，鼓励为主。用中文。" },
+          { role: "user", content: `学生学习的概念是「${this.state.concept}」。请逐题评价（对✓/部分正确△/需改进✗）并给一句话反馈，最后给总体建议。\n\n${this.state.quizQuestions.map((q, i) => `题目${i + 1}：${q}\n学生回答：${this.state.quizAnswers[i]}`).join("\n\n")}` },
+        ]);
+        this.state.quizFeedback = feedback;
+        this.render();
+      } catch (e: any) { new Notice("AI 请求失败：" + e.message); evalBtn.disabled = false; evalBtn.textContent = "提交，让 AI 评价"; }
+    });
+    if (this.state.quizFeedback) {
+      this.btn(row, "💾 保存并结束", "primary", async () => { await this.saveNote(parent); });
+    }
+  }
+
+  // ─── AI & Save helpers ────────────────────────────────────────────────────
+
+  private async callDeepSeek(messages: { role: string; content: string }[], maxTokens = 800): Promise<string> {
+    const resp = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.plugin.settings.apiKey },
+      body: JSON.stringify({ model: "deepseek-chat", messages, temperature: 0.8, max_tokens: maxTokens }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return (await resp.json()).choices[0].message.content as string;
+  }
+
+  private buildNoteContent(date: string): string {
+    const reviewDate = moment(date).add(REVIEW_INTERVALS[0], "days").format("YYYY-MM-DD");
+    const aiLog = this.state.aiHistory.filter(m => m.role !== "system")
+      .map(m => `**${m.role === "user" ? "我" : "AI"}：** ${m.content}`).join("\n\n");
+    const quizSection = this.state.quizQuestions.length > 0
+      ? `\n## AI 测验\n\n${this.state.quizQuestions.map((q, i) => `**题目 ${i + 1}：** ${q}\n\n**我的回答：** ${this.state.quizAnswers[i] || "（未回答）"}`).join("\n\n")}\n\n**AI 评价：**\n\n${this.state.quizFeedback || "（未评价）"}\n`
+      : "";
+
+    return `---
+tags: [费曼学习法]
+概念: ${this.state.concept}
+日期: ${date}
+掌握程度: 初识
+review_date: ${reviewDate}
+review_count: 0
+---
+
+# ${this.state.concept}
+
+${this.state.why ? `> 学习动机：${this.state.why}\n` : ""}
+## 第一步：简单解释
+
+${this.state.explanation}
+
+## AI 追问记录
+
+${aiLog || "（未使用 AI 追问）"}
+
+## 第二步：知识漏洞
+
+${this.state.gaps || "（未填写）"}
+
+## 第三步：最终简化版
+
+${this.state.finalExplanation}
+
+## 类比 / 例子
+
+${this.state.analogy || "（未填写）"}
+${quizSection}
+## 自检清单
+
+- [ ] 我能不看笔记解释这个概念
+- [ ] 我的解释全程没有用术语
+- [ ] 我知道自己哪里还不够懂
+- [ ] 我能举一个现实中的例子
+- [ ] 我能回答「为什么」这个概念是这样的
+`;
+  }
+
+  private async saveNote(parent?: HTMLElement) {
+    const { vault } = this.app;
+    const folder = this.plugin.settings.notesFolder;
+    const date = moment().format("YYYY-MM-DD");
+    const filename = `${folder}/${date} ${this.state.concept}.md`;
+
+    if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
+
+    const content = this.buildNoteContent(date);
+    const existing = vault.getAbstractFileByPath(filename);
+    existing instanceof TFile ? await vault.modify(existing, content) : await vault.create(filename, content);
+
+    await this.updateIndex(date);
+    await this.plugin.recordLearningDate();
+
+    // Notion sync
+    if (this.plugin.settings.notionToken && this.plugin.settings.notionDatabaseId) {
+      try { await this.syncToNotion(); new Notice(`「${this.state.concept}」已保存并同步到 Notion ✓`); }
+      catch (e: any) { new Notice(`笔记已保存，Notion 同步失败：${e.message}`); }
+    } else {
+      new Notice(`「${this.state.concept}」已保存，明天提醒复习 ✓`);
+    }
+
+    // Open note
+    const file = vault.getAbstractFileByPath(filename);
+    if (file instanceof TFile) await this.app.workspace.getLeaf("tab").openFile(file);
+
+    // Fetch AI recommendations in background
+    if (this.plugin.settings.apiKey) {
+      this.fetchRecommendations(parent);
+    }
+  }
+
+  private async fetchRecommendations(parent?: HTMLElement) {
+    try {
+      const all = this.plugin.getAllConcepts().map(c => c.concept);
+      const existing = all.length > 0 ? `（已学过：${all.slice(0, 10).join("、")}，不要重复推荐）` : "";
+      const result = await this.callDeepSeek([
+        { role: "system", content: "你是一个学习顾问，推荐接下来值得学习的相关概念。只输出概念名称，每个名称一行，共3个，不要编号或解释。" },
+        { role: "user", content: `刚学完「${this.state.concept}」${this.state.why ? `，学习动机是：${this.state.why}` : ""}。推荐3个接下来值得学习的相关概念。${existing}` },
+      ], 200);
+      this.state.recommendations = result.split("\n").map(l => l.trim()).filter(l => l && !l.match(/^\d+\./)).slice(0, 3);
+      if (parent) this.renderRecommendations(parent);
+    } catch {
+      // Recommendations are optional, ignore errors
+    }
+  }
+
+  private async updateIndex(date: string) {
+    const { vault } = this.app;
+    const file = vault.getAbstractFileByPath(this.plugin.settings.indexFile);
+    if (!(file instanceof TFile)) return;
+    const noteLink = `[[${this.plugin.settings.notesFolder}/${date} ${this.state.concept}|${this.state.concept}]]`;
+    const content = await vault.read(file);
+    const updated = content.replace(/(\| *\n*$)/m, `| ${noteLink} | | 初识 | 进行中 | ${date} |\n$1`);
+    if (updated !== content) await vault.modify(file, updated);
+  }
+
+  private async syncToNotion() {
+    const { notionToken, notionDatabaseId } = this.plugin.settings;
+    const resp = await fetch("https://api.notion.com/v1/pages", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + notionToken, "Content-Type": "application/json", "Notion-Version": "2022-06-28" },
+      body: JSON.stringify({
+        parent: { database_id: notionDatabaseId },
+        properties: {
+          "概念名称": { title: [{ text: { content: this.state.concept } }] },
+          "学科领域": { select: { name: "其他" } },
+          "掌握程度": { select: { name: "初识" } },
+          "状态": { select: { name: "进行中" } },
+          "第一步_概念描述": { rich_text: [{ text: { content: truncate(this.state.why || this.state.concept) } }] },
+          "第二步_简单解释": { rich_text: [{ text: { content: truncate(this.state.explanation) } }] },
+          "第三步_知识漏洞": { rich_text: [{ text: { content: truncate(this.state.gaps || "（未填写）") } }] },
+          "第四步_类比简化": { rich_text: [{ text: { content: truncate((this.state.finalExplanation + "\n\n" + (this.state.analogy || "")).trim()) } }] },
+        },
+      }),
+    });
+    if (!resp.ok) { const err = await resp.json(); throw new Error(err.message || resp.statusText); }
+  }
+
+  loadConcept(concept: string) {
+    this.state = emptyState();
+    this.state.concept = concept;
+    this.state.step = 1;
+    this.render();
+  }
+}
+
+// ─── Settings Tab ─────────────────────────────────────────────────────────────
+
+class FeynmanSettingTab extends PluginSettingTab {
+  plugin: FeynmanPlugin;
+  constructor(app: App, plugin: FeynmanPlugin) { super(app, plugin); this.plugin = plugin; }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("h2", { text: "费曼学习法 设置" });
+
+    containerEl.createEl("h3", { text: "AI 设置" });
+    new Setting(containerEl).setName("DeepSeek API Key").setDesc("在 platform.deepseek.com 获取")
+      .addText(t => t.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey)
+        .then(t => { t.inputEl.type = "password"; })
+        .onChange(async v => { this.plugin.settings.apiKey = v; await this.plugin.saveSettings(); }));
+
+    containerEl.createEl("h3", { text: "笔记设置" });
+    new Setting(containerEl).setName("笔记保存目录").setDesc("相对于 vault 根目录的路径")
+      .addText(t => t.setPlaceholder("01.读书笔记/费曼笔记").setValue(this.plugin.settings.notesFolder)
+        .onChange(async v => { this.plugin.settings.notesFolder = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("概念索引文件").setDesc("费曼学习索引文件的路径")
+      .addText(t => t.setPlaceholder("01.读书笔记/费曼学习索引.md").setValue(this.plugin.settings.indexFile)
+        .onChange(async v => { this.plugin.settings.indexFile = v; await this.plugin.saveSettings(); }));
+
+    containerEl.createEl("h3", { text: "Notion 同步" });
+    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "填写后保存笔记时自动同步到 Notion，留空则不同步。" });
+    new Setting(containerEl).setName("Notion Integration Token").setDesc("在 notion.so/my-integrations 创建集成后获取")
+      .addText(t => t.setPlaceholder("secret_...").setValue(this.plugin.settings.notionToken)
+        .then(t => { t.inputEl.type = "password"; })
+        .onChange(async v => { this.plugin.settings.notionToken = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("Notion 数据库 ID").setDesc("已预填为你的「学习概念库」")
+      .addText(t => t.setPlaceholder("数据库 ID").setValue(this.plugin.settings.notionDatabaseId)
+        .onChange(async v => { this.plugin.settings.notionDatabaseId = v; await this.plugin.saveSettings(); }));
+  }
+}
+
+// ─── Plugin ───────────────────────────────────────────────────────────────────
+
+export default class FeynmanPlugin extends Plugin {
+  settings: FeynmanSettings;
+  learningDates: string[] = [];
+  reviewHistory: ReviewRecord[] = [];
+
+  async onload() {
+    await this.loadSettings();
+    const data = await this.loadData();
+    this.learningDates = data?.learningDates ?? [];
+    this.reviewHistory = data?.reviewHistory ?? [];
+
+    this.registerView(VIEW_TYPE, leaf => new FeynmanView(leaf, this));
+    this.addRibbonIcon("brain", "费曼学习法", () => this.activateView());
+
+    this.addCommand({ id: "open-feynman-view", name: "打开费曼学习面板", callback: () => this.activateView() });
+    this.addCommand({
+      id: "feynman-quick-capture", name: "用费曼法学习选中文字",
+      editorCallback: (editor: Editor) => {
+        const selected = editor.getSelection().trim();
+        if (!selected) { new Notice("请先选中一段文字"); return; }
+        this.activateView().then(() => {
+          const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+          if (leaves.length > 0) (leaves[0].view as FeynmanView).loadConcept(selected);
+        });
+      },
+    });
+
+    this.addSettingTab(new FeynmanSettingTab(this.app, this));
+    this.app.workspace.onLayoutReady(() => this.notifyDueReviews());
+  }
+
+  async onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE); }
+
+  async activateView() {
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) return;
+    await leaf.setViewState({ type: VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  // ─── Data ────────────────────────────────────────────────────────────────
+
+  getAllConcepts(): ConceptMeta[] {
+    const folder = this.settings.notesFolder;
+    return this.app.vault.getMarkdownFiles()
+      .filter(f => f.path.startsWith(folder + "/"))
+      .sort((a, b) => b.stat.mtime - a.stat.mtime)
+      .flatMap(file => {
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (!fm) return [];
+        return [{ concept: fm.概念 || file.basename, date: fm.日期 || "", mastery: fm.掌握程度 || "初识", subject: fm.学科 || "", file }];
+      });
+  }
+
+  getRecentConcepts(n: number): ConceptMeta[] {
+    return this.getAllConcepts().slice(0, n);
+  }
+
+  getDueConcepts(): DueConcept[] {
+    const today = moment().format("YYYY-MM-DD");
+    const folder = this.settings.notesFolder;
+    return this.app.vault.getMarkdownFiles()
+      .filter(f => f.path.startsWith(folder + "/"))
+      .flatMap(file => {
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (!fm?.review_date || fm.review_date === "completed" || fm.review_date > today) return [];
+        return [{ file, concept: fm.概念 || file.basename, reviewCount: fm.review_count ?? 0 }];
+      });
+  }
+
+  getStats() {
+    const all = this.getAllConcepts();
+    const weekStart = moment().startOf("isoWeek");
+    const mastery: Record<string, number> = {};
+    let thisWeek = 0;
+    for (const c of all) {
+      mastery[c.mastery] = (mastery[c.mastery] ?? 0) + 1;
+      if (c.date && moment(c.date).isSameOrAfter(weekStart)) thisWeek++;
+    }
+    return { total: all.length, thisWeek, dueCount: this.getDueConcepts().length, streak: this.calcStreak(), mastery };
+  }
+
+  private calcStreak(): number {
+    const dates = [...new Set(this.learningDates)].sort().reverse();
+    if (dates.length === 0) return 0;
+    const today = moment().format("YYYY-MM-DD");
+    const yesterday = moment().subtract(1, "day").format("YYYY-MM-DD");
+    // Streak breaks if didn't learn today or yesterday
+    if (dates[0] !== today && dates[0] !== yesterday) return 0;
+    let streak = 0;
+    let expected = moment(dates[0]);
+    for (const d of dates) {
+      if (moment(d).isSame(expected, "day")) { streak++; expected.subtract(1, "day"); }
+      else break;
+    }
+    return streak;
+  }
+
+  async markReviewed(file: TFile, currentCount: number, passed: boolean) {
+    const newCount = passed ? currentCount + 1 : currentCount;
+    // If passed: advance to next interval; if failed: retry tomorrow
+    const nextInterval = passed ? (REVIEW_INTERVALS[newCount] ?? null) : 1;
+    const nextDate = (passed && nextInterval === null)
+      ? "completed"
+      : moment().add(nextInterval!, "days").format("YYYY-MM-DD");
+    const content = await this.app.vault.read(file);
+    const updated = content
+      .replace(/^review_date: .+$/m, `review_date: ${nextDate}`)
+      .replace(/^review_count: \d+$/m, `review_count: ${newCount}`)
+      .replace(/^掌握程度: .+$/m, `掌握程度: ${MASTERY_LEVELS[Math.min(newCount, 3)]}`);
+    await this.app.vault.modify(file, updated);
+  }
+
+  async recordLearningDate() {
+    const today = moment().format("YYYY-MM-DD");
+    if (!this.learningDates.includes(today)) {
+      this.learningDates.push(today);
+      await this.saveData({ ...(await this.loadData()), learningDates: this.learningDates });
+    }
+  }
+
+  async recordReview(concept: string, passed: boolean) {
+    this.reviewHistory.push({ date: moment().format("YYYY-MM-DD"), concept, passed });
+    await this.saveData({ ...(await this.loadData()), reviewHistory: this.reviewHistory });
+  }
+
+  getConceptReviewStats(concept: string): { total: number; passed: number; rate: string } {
+    const records = this.reviewHistory.filter(r => r.concept === concept);
+    const passed = records.filter(r => r.passed).length;
+    const rate = records.length === 0 ? "—" : `${Math.round(passed / records.length * 100)}%`;
+    return { total: records.length, passed, rate };
+  }
+
+  getOverallReviewStats(): { total: number; passed: number; rate: string } {
+    const passed = this.reviewHistory.filter(r => r.passed).length;
+    const total = this.reviewHistory.length;
+    const rate = total === 0 ? "—" : `${Math.round(passed / total * 100)}%`;
+    return { total, passed, rate };
+  }
+
+  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
+  async saveSettings() { await this.saveData({ ...(await this.loadData()), ...this.settings }); }
+  private notifyDueReviews() {
+    const due = this.getDueConcepts();
+    if (due.length > 0) new Notice(`📅 有 ${due.length} 个费曼概念待复习`, 8000);
+  }
+}
