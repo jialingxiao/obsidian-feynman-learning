@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
-    "bump": "node scripts/version-bump.mjs"
+    "bump": "node scripts/version-bump.mjs",
+    "test": "jest"
   },
   "devDependencies": {
+    "@types/jest": "^29.0.0",
     "@types/node": "^22.0.0",
     "esbuild": "^0.21.0",
+    "jest": "^29.0.0",
     "obsidian": "latest",
+    "ts-jest": "^29.0.0",
     "tslib": "^2.8.1",
     "typescript": "^5.0.0"
   }
