@@ -391,33 +391,57 @@ class FeynmanView extends ItemView {
 
         lastDimensions = dimensions;
         lastEvalText = evalText;
-        partialPass = passed && dimensions.some(d => d.score === "△");
+        const allPerfect = passed && dimensions.length > 0 && dimensions.every(d => d.score === "✓");
+        partialPass = passed && !allPerfect && dimensions.some(d => d.score !== "✓");
         await this.plugin.recordReview(item.concept, passed);
 
         const actionRow = this.btnRow(resultEl);
         if (passed) {
           const nextMastery = MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)];
           const rawNextDays: number | null = REVIEW_INTERVALS[item.reviewCount + 1] ?? null;
-          const actualNextDays: number | null = (rawNextDays !== null && partialPass)
-            ? Math.max(1, Math.round(rawNextDays * 0.6))
-            : rawNextDays;
-          const btnLabel = (partialPass && actualNextDays !== null)
-            ? `升级为「${nextMastery}」（部分掌握，${actualNextDays} 天后复习）→`
-            : `升级为「${nextMastery}」→`;
+          let actualNextDays: number | null;
+          if (rawNextDays === null) {
+            actualNextDays = null;
+          } else if (allPerfect) {
+            actualNextDays = Math.round(rawNextDays * 1.3);
+          } else if (partialPass) {
+            actualNextDays = Math.max(1, Math.round(rawNextDays * 0.6));
+          } else {
+            actualNextDays = rawNextDays;
+          }
+
+          let btnLabel: string;
+          if (allPerfect && actualNextDays !== null) {
+            btnLabel = `很熟练！升级为「${nextMastery}」（${actualNextDays} 天后复习）→`;
+          } else if (partialPass && actualNextDays !== null) {
+            btnLabel = `升级为「${nextMastery}」（部分掌握，${actualNextDays} 天后复习）→`;
+          } else {
+            btnLabel = `升级为「${nextMastery}」→`;
+          }
+
           this.btn(actionRow, btnLabel, "primary", async () => {
-            await this.plugin.markReviewed(item.file, item.reviewCount, true, partialPass);
+            await this.plugin.markReviewed(item.file, item.reviewCount, true, partialPass, allPerfect);
             new Notice(actualNextDays !== null
-              ? `「${item.concept}」已升级为「${nextMastery}」，${actualNextDays} 天后再提醒`
-              : `「${item.concept}」已达到精通！`
+              ? `「${item.concept}」已升级为「${nextMastery}」，${actualNextDays} 天后再提醒${allPerfect ? " 🎉" : ""}`
+              : `「${item.concept}」已达到精通！🎉`
             );
             this.render();
           });
+
+          if (partialPass) {
+            this.btn(actionRow, "🎯 强化弱点", "secondary", async () => {
+              await this.renderWeakPointDrill(resultEl, item.concept, lastDimensions);
+            });
+          }
         } else {
           this.btn(actionRow, "明天再试", "warn", async () => {
             await this.plugin.markReviewed(item.file, item.reviewCount, false);
             await this.saveFailedReviewToNote(item.file, lastDimensions, lastEvalText);
             new Notice(`「${item.concept}」明天再复习一次`);
             this.render();
+          });
+          this.btn(actionRow, "🎯 专项练习", "secondary", async () => {
+            await this.renderWeakPointDrill(resultEl, item.concept, lastDimensions);
           });
           this.btn(actionRow, "再解释一次", "secondary", () => {
             expTA.value = "";
@@ -1074,6 +1098,94 @@ ${quizSection}
     } catch { /* non-critical */ }
   }
 
+  private async renderWeakPointDrill(
+    container: HTMLElement,
+    concept: string,
+    dimensions: { label: string; score: string; note: string }[],
+  ) {
+    container.querySelector(".feynman-drill")?.remove();
+    const drillCard = container.createDiv("feynman-drill");
+    drillCard.createDiv({ cls: "feynman-ai-label", text: "🎯 弱点专项练习" });
+
+    const weakDims = dimensions.filter(d => d.score === "✗" || d.score === "△");
+    if (weakDims.length === 0) {
+      drillCard.createDiv({ cls: "feynman-hint", text: "没有检测到弱点维度" });
+      return;
+    }
+
+    const dimDesc = weakDims.map(d => `${d.label}（${d.score === "✗" ? "未掌握" : "部分掌握"}：${d.note || "需加强"}`).join("；");
+    const loadingEl = drillCard.createDiv({ cls: "feynman-hint", text: "AI 生成针对性练习题中…" });
+
+    try {
+      const result = await this.callDeepSeek([
+        {
+          role: "system",
+          content: "你是一个针对薄弱点出练习题的老师。根据学生存在不足的维度，生成2-3道针对性练习题。要求：每道题聚焦一个薄弱维度，考察理解而非死记硬背，难度适中。格式：每题独立一行，前加「Q：」。",
+        },
+        {
+          role: "user",
+          content: `概念：「${concept}」\n薄弱维度：${dimDesc}`,
+        },
+      ], 500);
+
+      loadingEl.remove();
+
+      const questions = result
+        .split("\n")
+        .filter(l => l.trim().match(/^Q[:：]/))
+        .map(l => l.replace(/^Q[:：]\s*/, "").trim())
+        .filter(Boolean)
+        .slice(0, 3);
+
+      if (questions.length === 0) {
+        drillCard.createDiv({ cls: "feynman-hint", text: "未能生成练习题，请重试" });
+        return;
+      }
+
+      const answerEls: HTMLTextAreaElement[] = [];
+      for (const q of questions) {
+        const qWrap = drillCard.createDiv("feynman-quiz-item");
+        qWrap.createDiv({ cls: "feynman-quiz-q", text: q });
+        answerEls.push(this.ta(qWrap, "写下你的回答……"));
+      }
+
+      const btnRow = this.btnRow(drillCard);
+      const submitBtn = this.btn(btnRow, "提交答案，获取反馈", "primary", async () => {
+        const answers = answerEls.map(el => el.value.trim());
+        if (answers.some(a => !a)) { new Notice("请回答所有练习题"); return; }
+        submitBtn.disabled = true; submitBtn.textContent = "AI 评价中…";
+        try {
+          const feedback = await this.callDeepSeek([
+            {
+              role: "system",
+              content: "你是一个耐心的学习教练。学生刚完成了针对薄弱维度的专项练习。逐题给出简短评价，重点判断是否真正理解了该薄弱点（用✓/△/✗开头）。最后一行给一句鼓励。用中文，语气友好。",
+            },
+            {
+              role: "user",
+              content: `概念：「${concept}」\n薄弱维度：${dimDesc}\n\n${questions.map((q, i) => `题目：${q}\n回答：${answers[i]}`).join("\n\n")}`,
+            },
+          ], 500);
+
+          drillCard.querySelector(".feynman-drill-feedback")?.remove();
+          const fbEl = drillCard.createDiv("feynman-drill-feedback");
+          fbEl.createDiv({ cls: "feynman-ai-label", text: "📝 练习反馈" });
+          fbEl.createDiv({ cls: "feynman-ai-message", text: feedback });
+          submitBtn.textContent = "再练一次";
+          submitBtn.disabled = false;
+          submitBtn.onclick = () => {
+            answerEls.forEach(el => { el.value = ""; });
+            drillCard.querySelector(".feynman-drill-feedback")?.remove();
+          };
+        } catch (e: any) {
+          new Notice("AI 请求失败：" + e.message);
+          submitBtn.disabled = false; submitBtn.textContent = "提交答案，获取反馈";
+        }
+      });
+    } catch (e: any) {
+      loadingEl.textContent = "AI 请求失败：" + e.message;
+    }
+  }
+
   private async generateWeeklyReport() {
     const weekData = this.plugin.getWeeklyData();
     const isoWeek = moment().isoWeek();
@@ -1387,14 +1499,16 @@ export default class FeynmanPlugin extends Plugin {
     return streak;
   }
 
-  async markReviewed(file: TFile, currentCount: number, passed: boolean, partialPass = false) {
+  async markReviewed(file: TFile, currentCount: number, passed: boolean, partialPass = false, expertPass = false) {
     const newCount = passed ? currentCount + 1 : currentCount;
     let nextInterval: number | null;
     if (!passed) {
       nextInterval = 1;
     } else {
       nextInterval = REVIEW_INTERVALS[newCount] ?? null;
-      if (partialPass && nextInterval !== null) {
+      if (expertPass && nextInterval !== null) {
+        nextInterval = Math.round(nextInterval * 1.3);
+      } else if (partialPass && nextInterval !== null) {
         nextInterval = Math.max(1, Math.round(nextInterval * 0.6));
       }
     }

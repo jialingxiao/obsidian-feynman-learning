@@ -342,3 +342,8 @@
 .feynman-connection-link { color: var(--color-accent); cursor: pointer; }
 .feynman-connection-link:hover { text-decoration: underline; }
 .feynman-connection-desc { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; }
+
+
+/* Weak-point drill */
+.feynman-drill { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-left: 3px solid #e07b39; border-radius: 0 8px 8px 0; padding: 12px 14px; margin-top: 12px; }
+.feynman-drill-feedback { margin-top: 12px; }
