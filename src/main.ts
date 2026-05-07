@@ -22,6 +22,9 @@ const MASTERY_COLORS: Record<string, string> = {
 
 interface FeynmanSettings {
   apiKey: string;
+  apiBase: string;
+  model: string;
+  temperature: number;
   notesFolder: string;
   indexFile: string;
   notionToken: string;
@@ -30,6 +33,9 @@ interface FeynmanSettings {
 
 const DEFAULT_SETTINGS: FeynmanSettings = {
   apiKey: "",
+  apiBase: "https://api.deepseek.com/v1",
+  model: "deepseek-chat",
+  temperature: 0.8,
   notesFolder: "01.读书笔记/费曼笔记",
   indexFile: "01.读书笔记/费曼学习索引.md",
   notionToken: "",
@@ -275,21 +281,30 @@ class FeynmanView extends ItemView {
     wrap.querySelector(".feynman-review-session")?.remove();
     const session = wrap.createDiv("feynman-review-session");
 
-    // Load gaps from previous note
+    // Load context from note (single read)
     let previousGaps = "";
+    let previousWeakDims: string[] = [];
     try {
       const content = await this.app.vault.read(item.file);
-      const match = content.match(/## 第二步：知识漏洞\n+([\s\S]*?)(?=\n## )/);
-      previousGaps = match?.[1]?.trim() ?? "";
+      const gapsMatch = content.match(/## 第二步：知识漏洞\n+([\s\S]*?)(?=\n## )/);
+      previousGaps = gapsMatch?.[1]?.trim() ?? "";
       if (previousGaps === "（未填写）") previousGaps = "";
-    } catch { /* file read optional */ }
+      const recSection = content.match(/## 复习记录\n([\s\S]*)/)?.[1] ?? "";
+      const lastFail = recSection.match(/### .+? · ✗ 未通过\n([\s\S]*?)(?=\n###|$)/)?.[1] ?? "";
+      previousWeakDims = (lastFail.match(/- .+?：✗[^\n]*/g) ?? []).map(l => l.replace(/^- /, "").trim());
+    } catch { /* optional */ }
 
     session.createDiv({ cls: "feynman-review-session-hint", text: `不看笔记，用自己的话重新解释「${item.concept}」，AI 会从三个维度评判你的掌握程度。` });
 
-    if (previousGaps) {
+    if (previousWeakDims.length > 0 || previousGaps) {
       const gapsEl = session.createDiv("feynman-review-gaps");
-      gapsEl.createDiv({ cls: "feynman-ai-label", text: "📌 上次记录的知识漏洞（重点关注这些）" });
-      gapsEl.createDiv({ cls: "feynman-review-session-hint", text: previousGaps });
+      if (previousWeakDims.length > 0) {
+        gapsEl.createDiv({ cls: "feynman-ai-label", text: "⚠️ 上次未通过的维度（重点补强）" });
+        gapsEl.createDiv({ cls: "feynman-review-session-hint", text: previousWeakDims.join("\n") });
+      } else {
+        gapsEl.createDiv({ cls: "feynman-ai-label", text: "📌 上次记录的知识漏洞" });
+        gapsEl.createDiv({ cls: "feynman-review-session-hint", text: previousGaps });
+      }
     }
 
     const expTA = this.ta(session, "用最简单的语言解释……");
@@ -299,6 +314,7 @@ class FeynmanView extends ItemView {
 
     let lastDimensions: { label: string; score: string; note: string }[] = [];
     let lastEvalText = "";
+    let partialPass = false;
 
     const row = this.btnRow(session);
     this.btn(row, "取消", "secondary", () => { session.remove(); });
@@ -363,16 +379,22 @@ class FeynmanView extends ItemView {
 
         lastDimensions = dimensions;
         lastEvalText = evalText;
+        partialPass = passed && dimensions.some(d => d.score === "△");
         await this.plugin.recordReview(item.concept, passed);
 
         const actionRow = this.btnRow(resultEl);
         if (passed) {
-          const nextInterval = REVIEW_INTERVALS[item.reviewCount] ?? null;
+          const hasNextReview = REVIEW_INTERVALS[item.reviewCount] != null;
           const nextMastery = MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)];
-          this.btn(actionRow, `升级为「${nextMastery}」→`, "primary", async () => {
-            await this.plugin.markReviewed(item.file, item.reviewCount, true);
-            new Notice(nextInterval
-              ? `「${item.concept}」已升级为「${nextMastery}」，${REVIEW_INTERVALS[item.reviewCount + 1] ?? 30} 天后再提醒`
+          const rawNextDays = REVIEW_INTERVALS[item.reviewCount + 1] ?? 30;
+          const actualNextDays = partialPass ? Math.max(1, Math.round(rawNextDays * 0.6)) : rawNextDays;
+          const btnLabel = partialPass
+            ? `升级为「${nextMastery}」（部分掌握，${actualNextDays} 天后复习）→`
+            : `升级为「${nextMastery}」→`;
+          this.btn(actionRow, btnLabel, "primary", async () => {
+            await this.plugin.markReviewed(item.file, item.reviewCount, true, partialPass);
+            new Notice(hasNextReview
+              ? `「${item.concept}」已升级为「${nextMastery}」，${actualNextDays} 天后再提醒`
               : `「${item.concept}」已达到精通！`
             );
             this.render();
@@ -447,6 +469,53 @@ class FeynmanView extends ItemView {
       this.state.why = whyInp.value.trim();
       this.state.step = 1;
       this.render();
+    });
+
+    // Text extraction section
+    const extractToggle = card.createDiv("feynman-extract-toggle");
+    extractToggle.createSpan({ cls: "feynman-extract-toggle-label", text: "📄 从原文提取概念" });
+    let extractOpen = false;
+    const extractBody = card.createDiv("feynman-extract-body");
+    extractBody.style.display = "none";
+    extractToggle.addEventListener("click", () => {
+      extractOpen = !extractOpen;
+      extractBody.style.display = extractOpen ? "block" : "none";
+      extractToggle.toggleClass("open", extractOpen);
+    });
+
+    const textTA = this.ta(extractBody, "粘贴文章、课堂笔记、书摘……");
+    const extractRow = this.btnRow(extractBody);
+    const extractBtn = this.btn(extractRow, "AI 提取概念", "primary", async () => {
+      const text = textTA.value.trim();
+      if (!text) { new Notice("请先粘贴原文"); return; }
+      extractBtn.disabled = true; extractBtn.textContent = "提取中…";
+      try {
+        const result = await this.callDeepSeek([
+          { role: "system", content: "从给定文本中提取3-8个值得用费曼学习法深入理解的核心概念，按建议学习顺序排列。每行一个，格式：「概念名」— 一句话说明为什么值得学。不要编号。" },
+          { role: "user", content: text.slice(0, 3000) },
+        ], 500);
+
+        const concepts = result.split("\n").filter(l => l.trim()).map(l => {
+          const m = l.match(/「(.+?)」[—\-–]\s*(.*)/);
+          return m ? { name: m[1].trim(), reason: m[2].trim() } : { name: l.replace(/「|」/g, "").trim(), reason: "" };
+        }).filter(c => c.name).slice(0, 8);
+
+        extractBody.querySelector(".feynman-extract-results")?.remove();
+        if (concepts.length === 0) { new Notice("未能提取到概念，请换一段文本"); return; }
+
+        const results = extractBody.createDiv("feynman-extract-results");
+        results.createDiv({ cls: "feynman-ai-label", text: `提取到 ${concepts.length} 个概念，点击填入` });
+        for (const c of concepts) {
+          const chip = results.createDiv({ cls: "feynman-extract-chip" });
+          chip.createSpan({ cls: "feynman-extract-name", text: c.name });
+          if (c.reason) chip.createSpan({ cls: "feynman-extract-reason", text: c.reason });
+          chip.addEventListener("click", () => { nameInp.value = c.name; nameInp.scrollIntoView({ behavior: "smooth" }); });
+        }
+      } catch (e: any) {
+        new Notice("AI 请求失败：" + e.message);
+      } finally {
+        extractBtn.disabled = false; extractBtn.textContent = "AI 提取概念";
+      }
     });
   }
 
@@ -830,10 +899,12 @@ class FeynmanView extends ItemView {
   // ─── AI & Save helpers ────────────────────────────────────────────────────
 
   private async callDeepSeek(messages: { role: string; content: string }[], maxTokens = 800): Promise<string> {
-    const resp = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const { apiKey, apiBase, model, temperature } = this.plugin.settings;
+    const base = apiBase.replace(/\/$/, "");
+    const resp = await fetch(`${base}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.plugin.settings.apiKey },
-      body: JSON.stringify({ model: "deepseek-chat", messages, temperature: 0.8, max_tokens: maxTokens }),
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
     });
     if (!resp.ok) throw new Error(await resp.text());
     return (await resp.json()).choices[0].message.content as string;
@@ -1141,10 +1212,19 @@ class FeynmanSettingTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "费曼学习法 设置" });
 
     containerEl.createEl("h3", { text: "AI 设置" });
-    new Setting(containerEl).setName("DeepSeek API Key").setDesc("在 platform.deepseek.com 获取")
+    new Setting(containerEl).setName("API Key").setDesc("DeepSeek / OpenAI / 其他兼容服务的 API Key")
       .addText(t => t.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey)
         .then(t => { t.inputEl.type = "password"; })
         .onChange(async v => { this.plugin.settings.apiKey = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("API Base URL").setDesc("兼容 OpenAI 格式的接口地址")
+      .addText(t => t.setPlaceholder("https://api.deepseek.com/v1").setValue(this.plugin.settings.apiBase)
+        .onChange(async v => { this.plugin.settings.apiBase = v.trim(); await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("模型名称").setDesc("例如 deepseek-chat、gpt-4o、claude-3-5-sonnet-20241022")
+      .addText(t => t.setPlaceholder("deepseek-chat").setValue(this.plugin.settings.model)
+        .onChange(async v => { this.plugin.settings.model = v.trim(); await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("Temperature").setDesc("生成随机性，0 最保守，1 最发散（默认 0.8）")
+      .addSlider(s => s.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip()
+        .onChange(async v => { this.plugin.settings.temperature = v; await this.plugin.saveSettings(); }));
 
     containerEl.createEl("h3", { text: "笔记设置" });
     new Setting(containerEl).setName("笔记保存目录").setDesc("相对于 vault 根目录的路径")
@@ -1160,7 +1240,7 @@ class FeynmanSettingTab extends PluginSettingTab {
       .addText(t => t.setPlaceholder("secret_...").setValue(this.plugin.settings.notionToken)
         .then(t => { t.inputEl.type = "password"; })
         .onChange(async v => { this.plugin.settings.notionToken = v; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("Notion 数据库 ID").setDesc("已预填为你的「学习概念库」")
+    new Setting(containerEl).setName("Notion 数据库 ID").setDesc("填写后可同步到你的 Notion 数据库")
       .addText(t => t.setPlaceholder("数据库 ID").setValue(this.plugin.settings.notionDatabaseId)
         .onChange(async v => { this.plugin.settings.notionDatabaseId = v; await this.plugin.saveSettings(); }));
   }
@@ -1267,10 +1347,17 @@ export default class FeynmanPlugin extends Plugin {
     return streak;
   }
 
-  async markReviewed(file: TFile, currentCount: number, passed: boolean) {
+  async markReviewed(file: TFile, currentCount: number, passed: boolean, partialPass = false) {
     const newCount = passed ? currentCount + 1 : currentCount;
-    // If passed: advance to next interval; if failed: retry tomorrow
-    const nextInterval = passed ? (REVIEW_INTERVALS[newCount] ?? null) : 1;
+    let nextInterval: number | null;
+    if (!passed) {
+      nextInterval = 1;
+    } else {
+      nextInterval = REVIEW_INTERVALS[newCount] ?? null;
+      if (partialPass && nextInterval !== null) {
+        nextInterval = Math.max(1, Math.round(nextInterval * 0.6));
+      }
+    }
     const nextDate = (passed && nextInterval === null)
       ? "completed"
       : moment().add(nextInterval!, "days").format("YYYY-MM-DD");
