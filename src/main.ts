@@ -73,6 +73,18 @@ function truncate(text: string, max = 1900): string {
   return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
 }
 
+function parseApiError(status: number, body: any): string {
+  const msg: string = body?.error?.message ?? body?.message ?? "";
+  if (status === 401) return "API Key 无效或已过期，请检查设置中的 Key";
+  if (status === 403) return "无权限访问该模型，请检查 Key 或模型名称";
+  if (status === 404) return "接口地址或模型不存在，请检查 API Base URL 和模型名称";
+  if (status === 429) return "请求过于频繁或余额不足，请稍后再试";
+  if (status >= 500)  return "AI 服务暂时不可用，请稍后再试";
+  if (/model/.test(msg))                              return `模型不存在或无权限：${msg}`;
+  if (/quota|balance|insufficient|credit/.test(msg)) return `余额不足：${msg}`;
+  return msg || `请求失败（HTTP ${status}）`;
+}
+
 function sanitizeFilename(name: string): string {
   return name.replace(/[/\\:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
 }
@@ -907,7 +919,10 @@ class FeynmanView extends ItemView {
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
       body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
     });
-    if (!resp.ok) throw new Error(await resp.text());
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(parseApiError(resp.status, body));
+    }
     return (await resp.json()).choices[0].message.content as string;
   }
 
@@ -1226,6 +1241,30 @@ class FeynmanSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Temperature").setDesc("生成随机性，0 最保守，1 最发散（默认 0.8）")
       .addSlider(s => s.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip()
         .onChange(async v => { this.plugin.settings.temperature = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("测试连接").setDesc("用当前设置发送一次测试请求，确认 Key、地址、模型均正确")
+      .addButton(b => b.setButtonText("测试连接").onClick(async () => {
+        const { apiKey, apiBase, model } = this.plugin.settings;
+        if (!apiKey) { new Notice("请先填写 API Key"); return; }
+        b.setButtonText("测试中…").setDisabled(true);
+        try {
+          const base = apiBase.replace(/\/$/, "");
+          const resp = await fetch(`${base}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+            body: JSON.stringify({ model, messages: [{ role: "user", content: "Hi" }], max_tokens: 1 }),
+          });
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            throw new Error(parseApiError(resp.status, body));
+          }
+          const data = await resp.json();
+          new Notice(`✓ 连接成功（模型：${data.model ?? model}）`);
+        } catch (e: any) {
+          new Notice(`✗ ${e.message}`);
+        } finally {
+          b.setButtonText("测试连接").setDisabled(false);
+        }
+      }));
 
     containerEl.createEl("h3", { text: "笔记设置" });
     new Setting(containerEl).setName("笔记保存目录").setDesc("相对于 vault 根目录的路径")
