@@ -39,6 +39,7 @@ export function parseApiError(status: number, body: any): string {
  * @param passed       - whether the review was judged as passed
  * @param partialPass  - passed but some dimensions were △ → 0.6× interval
  * @param expertPass   - passed with all dimensions ✓ → 1.3× interval
+ * @param intervals    - custom interval ladder (defaults to REVIEW_INTERVALS)
  * @returns days until next review, or null when fully mastered (no more reviews)
  */
 export function calcNextInterval(
@@ -46,9 +47,10 @@ export function calcNextInterval(
   passed: boolean,
   partialPass: boolean,
   expertPass: boolean,
+  intervals: readonly number[] = REVIEW_INTERVALS,
 ): number | null {
   if (!passed) return 1;                                    // retry tomorrow
-  const raw: number | null = REVIEW_INTERVALS[reviewCount + 1] ?? null;
+  const raw: number | null = intervals[reviewCount + 1] ?? null;
   if (raw === null) return null;                            // fully mastered
   if (expertPass)   return Math.round(raw * 1.3);
   if (partialPass)  return Math.max(1, Math.round(raw * 0.6));

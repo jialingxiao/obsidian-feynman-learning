@@ -36,6 +36,7 @@ interface FeynmanSettings {
   indexFile: string;
   notionToken: string;
   notionDatabaseId: string;
+  reviewIntervals: number[];   // [retry, phase1, phase2] in days, e.g. [1, 7, 30]
 }
 
 const DEFAULT_SETTINGS: FeynmanSettings = {
@@ -47,6 +48,7 @@ const DEFAULT_SETTINGS: FeynmanSettings = {
   indexFile: "01.读书笔记/费曼学习索引.md",
   notionToken: "",
   notionDatabaseId: "",
+  reviewIntervals: [1, 7, 30],
 };
 
 interface FeynmanState {
@@ -65,7 +67,7 @@ interface FeynmanState {
   savedStem: string;  // actual filename stem used when the note was last saved
 }
 
-interface DueConcept { file: TFile; concept: string; reviewCount: number; }
+interface DueConcept { file: TFile; concept: string; reviewCount: number; reviewDate: string; mastery: string; }
 interface ConceptMeta { concept: string; date: string; mastery: string; subject: string; file: TFile; }
 interface ReviewRecord { date: string; concept: string; passed: boolean; }
 
@@ -87,6 +89,9 @@ class FeynmanView extends ItemView {
   private browsing = false;
   private browseSearch = "";
   private browseFilter = "全部";
+  private reviewSort: "due" | "mastery" | "name" = "due";
+  private batchMode = false;
+  private batchIndex = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: FeynmanPlugin) {
     super(leaf);
@@ -168,6 +173,10 @@ class FeynmanView extends ItemView {
   // ─── Step 0: Dashboard + History + Start ──────────────────────────────────
 
   private renderStep0(parent: HTMLElement) {
+    if (this.batchMode) {
+      this.renderBatchReview(parent);
+      return;
+    }
     this.renderDashboard(parent);
     this.renderQueue(parent);
     this.renderDueReviews(parent);
@@ -268,38 +277,136 @@ class FeynmanView extends ItemView {
   }
 
   private renderDueReviews(parent: HTMLElement) {
-    const due = this.plugin.getDueConcepts();
-    if (due.length === 0) return;
+    const allDue = this.plugin.getDueConcepts();
+    if (allDue.length === 0) return;
+
+    // ── Sort ──────────────────────────────────────────────────────────────────
+    const intervals = this.plugin.settings.reviewIntervals;
+    const today = moment().format("YYYY-MM-DD");
+    const MASTERY_ORDER: Record<string, number> = { "初识": 0, "理解": 1, "掌握": 2, "精通": 3 };
+    const due = [...allDue].sort((a, b) => {
+      if (this.reviewSort === "name")    return a.concept.localeCompare(b.concept, "zh");
+      if (this.reviewSort === "mastery") return (MASTERY_ORDER[a.mastery] ?? 0) - (MASTERY_ORDER[b.mastery] ?? 0);
+      // "due": most overdue first
+      return a.reviewDate.localeCompare(b.reviewDate);
+    });
+
     const card = parent.createDiv("feynman-card feynman-review-card");
-    this.badge(card, `📅 待复习 · ${due.length} 个`);
+
+    // ── Header row ────────────────────────────────────────────────────────────
+    const headerRow = card.createDiv("feynman-review-header");
+    this.badge(headerRow, `📅 待复习 · ${due.length} 个`);
+
+    const controls = headerRow.createDiv("feynman-review-controls");
+    // Sort tabs
+    const sortWrap = controls.createDiv("feynman-sort-tabs");
+    const sortOptions: { key: "due" | "mastery" | "name"; label: string }[] = [
+      { key: "due", label: "按到期" },
+      { key: "mastery", label: "按掌握" },
+      { key: "name", label: "按名称" },
+    ];
+    for (const opt of sortOptions) {
+      const tab = sortWrap.createDiv({
+        cls: `feynman-sort-tab ${this.reviewSort === opt.key ? "active" : ""}`,
+        text: opt.label,
+      });
+      tab.addEventListener("click", () => { this.reviewSort = opt.key; this.render(); });
+    }
+    // Batch button (only show when ≥2 items)
+    if (due.length >= 2) {
+      this.btn(controls, "🚀 批量复习", "primary", () => {
+        this.batchMode = true; this.batchIndex = 0; this.render();
+      });
+    }
+
     card.createEl("h2", { text: "这些概念到了复习时间" });
     const list = card.createDiv("feynman-review-list");
+
+    // Consume pending review file (auto-open from command)
+    const pendingPath = this.plugin.pendingReviewFilePath;
+    this.plugin.pendingReviewFilePath = null;
 
     for (const item of due) {
       const itemWrap = list.createDiv("feynman-review-item-wrap");
       const row = itemWrap.createDiv("feynman-review-item");
       const info = row.createDiv("feynman-review-info");
-      info.createSpan({ cls: "feynman-review-name", text: item.concept });
-      const next = REVIEW_INTERVALS[item.reviewCount] ?? null;
+
+      // Overdue badge
+      const overdueDays = moment(today).diff(moment(item.reviewDate), "days");
+      const nameEl = info.createDiv({ cls: "feynman-review-name-row" });
+      nameEl.createSpan({ cls: "feynman-review-name", text: item.concept });
+      if (overdueDays > 0) {
+        nameEl.createSpan({ cls: "feynman-overdue-badge", text: `逾期 ${overdueDays} 天` });
+      }
+
+      const hasMore = (intervals[item.reviewCount] ?? null) !== null;
       const rStats = this.plugin.getConceptReviewStats(item.concept);
-      const histText = rStats.total > 0 ? `历史通过率 ${rStats.rate} (${rStats.passed}/${rStats.total})` : "首次复习";
+      const histText = rStats.total > 0 ? `通过率 ${rStats.rate}` : "首次复习";
       info.createSpan({
         cls: "feynman-review-sub",
-        text: next ? `第 ${item.reviewCount + 1} 次 · 通过升级为「${MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)]}」 · ${histText}` : "已完成所有复习阶段",
+        text: hasMore
+          ? `${item.mastery} · 第 ${item.reviewCount + 1} 次 · ${histText}`
+          : "已完成所有复习阶段",
       });
 
       const btns = row.createDiv("feynman-review-btns");
       this.btn(btns, "打开笔记", "secondary", () => this.app.workspace.getLeaf("tab").openFile(item.file));
 
-      if (next !== null) {
-        this.btn(btns, "开始复习 →", "primary", async () => {
+      if (hasMore) {
+        const startBtn = this.btn(btns, "开始复习 →", "primary", async () => {
           await this.renderReviewSession(itemWrap, item);
         });
+        // Auto-open if triggered by "复习当前笔记" command
+        if (pendingPath && item.file.path === pendingPath) {
+          setTimeout(() => startBtn.click(), 150);
+        }
       }
     }
   }
 
-  private async renderReviewSession(wrap: HTMLElement, item: DueConcept) {
+  // ── Batch review ─────────────────────────────────────────────────────────────
+
+  private renderBatchReview(parent: HTMLElement) {
+    const due = this.plugin.getDueConcepts();
+    if (this.batchIndex >= due.length) {
+      // Summary screen
+      const card = parent.createDiv("feynman-card");
+      card.createEl("h2", { text: "🎉 批量复习完成！" });
+      card.createDiv({ cls: "feynman-hint", text: `共完成 ${due.length} 个概念的复习` });
+      this.btn(this.btnRow(card), "返回首页", "primary", () => {
+        this.batchMode = false; this.batchIndex = 0; this.render();
+      });
+      return;
+    }
+
+    const item = due[this.batchIndex];
+    const total = due.length;
+
+    const card = parent.createDiv("feynman-card feynman-batch-wrap");
+
+    // Progress header
+    const progressHeader = card.createDiv("feynman-batch-header");
+    progressHeader.createSpan({ cls: "feynman-batch-progress-label", text: `${this.batchIndex + 1} / ${total}` });
+    const barWrap = progressHeader.createDiv("feynman-progress-bar feynman-batch-bar");
+    const pct = Math.round(this.batchIndex / total * 100);
+    barWrap.createDiv({ cls: "feynman-progress-fill", attr: { style: `width:${pct}%` } });
+    this.btn(progressHeader, "退出", "secondary", () => {
+      this.batchMode = false; this.batchIndex = 0; this.render();
+    });
+
+    // Skip button
+    const skipRow = card.createDiv("feynman-batch-skip-row");
+    this.btn(skipRow, "跳过 →", "secondary", () => { this.batchIndex++; this.render(); });
+
+    // Render review session inline; onComplete advances to next item
+    void this.renderReviewSession(card, item, () => {
+      this.batchIndex++;
+      this.render();
+    });
+  }
+
+  private async renderReviewSession(wrap: HTMLElement, item: DueConcept, onComplete?: () => void) {
+    const done = onComplete ?? (() => this.render());
     wrap.querySelector(".feynman-review-session")?.remove();
     const session = wrap.createDiv("feynman-review-session");
 
@@ -408,7 +515,8 @@ class FeynmanView extends ItemView {
         const actionRow = this.btnRow(resultEl);
         if (passed) {
           const nextMastery = MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)];
-          const actualNextDays = calcNextInterval(item.reviewCount, true, partialPass, allPerfect);
+          const intervals = this.plugin.settings.reviewIntervals;
+          const actualNextDays = calcNextInterval(item.reviewCount, true, partialPass, allPerfect, intervals);
 
           let btnLabel: string;
           if (allPerfect && actualNextDays !== null) {
@@ -425,7 +533,7 @@ class FeynmanView extends ItemView {
               ? `「${item.concept}」已升级为「${nextMastery}」，${actualNextDays} 天后再提醒${allPerfect ? " 🎉" : ""}`
               : `「${item.concept}」已达到精通！🎉`
             );
-            this.render();
+            done();
           });
 
           if (partialPass) {
@@ -438,7 +546,7 @@ class FeynmanView extends ItemView {
             await this.plugin.markReviewed(item.file, item.reviewCount, false);
             await this.saveFailedReviewToNote(item.file, lastDimensions, lastEvalText);
             new Notice(`「${item.concept}」明天再复习一次`);
-            this.render();
+            done();
           });
           this.btn(actionRow, "🎯 专项练习", "secondary", async () => {
             await this.renderWeakPointDrill(resultEl, item.concept, lastDimensions);
@@ -1390,6 +1498,23 @@ class FeynmanSettingTab extends PluginSettingTab {
         }
       }));
 
+    containerEl.createEl("h3", { text: "复习设置" });
+    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "间隔梯度（天）：第一次复习 → 第二次 → 第三次。失败时固定明天再试。" });
+    const ivs = this.plugin.settings.reviewIntervals;
+    const ivLabels = ["初识→理解（天）", "理解→掌握（天）", "掌握→精通（天）"];
+    for (let i = 0; i < 3; i++) {
+      new Setting(containerEl).setName(ivLabels[i])
+        .addText(t => t
+          .setValue(String(ivs[i] ?? [1, 7, 30][i]))
+          .onChange(async v => {
+            const n = parseInt(v);
+            if (!Number.isNaN(n) && n >= 1) {
+              this.plugin.settings.reviewIntervals[i] = n;
+              await this.plugin.saveSettings();
+            }
+          }));
+    }
+
     containerEl.createEl("h3", { text: "笔记设置" });
     new Setting(containerEl).setName("笔记保存目录").setDesc("相对于 vault 根目录的路径")
       .addText(t => t.setPlaceholder("01.读书笔记/费曼笔记").setValue(this.plugin.settings.notesFolder)
@@ -1417,6 +1542,7 @@ export default class FeynmanPlugin extends Plugin {
   learningDates: string[] = [];
   reviewHistory: ReviewRecord[] = [];
   learningQueue: string[] = [];
+  pendingReviewFilePath: string | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -1429,6 +1555,23 @@ export default class FeynmanPlugin extends Plugin {
     this.addRibbonIcon("brain", "费曼学习法", () => this.activateView());
 
     this.addCommand({ id: "open-feynman-view", name: "打开费曼学习面板", callback: () => this.activateView() });
+    this.addCommand({
+      id: "feynman-review-current-note",
+      name: "复习当前费曼笔记",
+      checkCallback: (checking: boolean) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file?.path.startsWith(this.settings.notesFolder + "/")) return false;
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        const today = moment().format("YYYY-MM-DD");
+        const isDue = fm?.review_date && fm.review_date !== "completed" && fm.review_date <= today;
+        if (!isDue) return false;
+        if (!checking) {
+          this.pendingReviewFilePath = file.path;
+          void this.activateView();
+        }
+        return true;
+      },
+    });
     this.addCommand({
       id: "feynman-quick-capture", name: "用费曼法学习选中文字",
       editorCallback: (editor: Editor) => {
@@ -1498,7 +1641,13 @@ export default class FeynmanPlugin extends Plugin {
       .flatMap(file => {
         const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
         if (!fm?.review_date || fm.review_date === "completed" || fm.review_date > today) return [];
-        return [{ file, concept: fm.概念 || file.basename, reviewCount: fm.review_count ?? 0 }];
+        return [{
+          file,
+          concept: fm.概念 || file.basename,
+          reviewCount: fm.review_count ?? 0,
+          reviewDate: fm.review_date as string,
+          mastery: fm.掌握程度 || "初识",
+        }];
       });
   }
 
@@ -1532,7 +1681,7 @@ export default class FeynmanPlugin extends Plugin {
 
   async markReviewed(file: TFile, currentCount: number, passed: boolean, partialPass = false, expertPass = false) {
     const newCount = passed ? currentCount + 1 : currentCount;
-    const nextInterval = calcNextInterval(currentCount, passed, partialPass, expertPass);
+    const nextInterval = calcNextInterval(currentCount, passed, partialPass, expertPass, this.settings.reviewIntervals);
     const nextDate = (passed && nextInterval === null)
       ? "completed"
       : moment().add(nextInterval!, "days").format("YYYY-MM-DD");
