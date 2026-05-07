@@ -281,23 +281,27 @@ class FeynmanView extends ItemView {
     wrap.querySelector(".feynman-review-session")?.remove();
     const session = wrap.createDiv("feynman-review-session");
 
-    // Load gaps from previous note
+    // Load context from note (single read)
     let previousGaps = "";
+    let previousWeakDims: string[] = [];
     try {
       const content = await this.app.vault.read(item.file);
-      const match = content.match(/## 第二步：知识漏洞\n+([\s\S]*?)(?=\n## )/);
-      previousGaps = match?.[1]?.trim() ?? "";
+      const gapsMatch = content.match(/## 第二步：知识漏洞\n+([\s\S]*?)(?=\n## )/);
+      previousGaps = gapsMatch?.[1]?.trim() ?? "";
       if (previousGaps === "（未填写）") previousGaps = "";
-    } catch { /* file read optional */ }
+      const recSection = content.match(/## 复习记录\n([\s\S]*)/)?.[1] ?? "";
+      const lastFail = recSection.match(/### .+? · ✗ 未通过\n([\s\S]*?)(?=\n###|$)/)?.[1] ?? "";
+      previousWeakDims = (lastFail.match(/- .+?：✗[^\n]*/g) ?? []).map(l => l.replace(/^- /, "").trim());
+    } catch { /* optional */ }
 
     session.createDiv({ cls: "feynman-review-session-hint", text: `不看笔记，用自己的话重新解释「${item.concept}」，AI 会从三个维度评判你的掌握程度。` });
 
-    if (previousGaps || previousWeakDims.length > 0) {
+    if (previousWeakDims.length > 0 || previousGaps) {
       const gapsEl = session.createDiv("feynman-review-gaps");
       if (previousWeakDims.length > 0) {
         gapsEl.createDiv({ cls: "feynman-ai-label", text: "⚠️ 上次未通过的维度（重点补强）" });
         gapsEl.createDiv({ cls: "feynman-review-session-hint", text: previousWeakDims.join("\n") });
-      } else if (previousGaps) {
+      } else {
         gapsEl.createDiv({ cls: "feynman-ai-label", text: "📌 上次记录的知识漏洞" });
         gapsEl.createDiv({ cls: "feynman-review-session-hint", text: previousGaps });
       }
@@ -311,15 +315,6 @@ class FeynmanView extends ItemView {
     let lastDimensions: { label: string; score: string; note: string }[] = [];
     let lastEvalText = "";
     let partialPass = false;
-
-    // Extract weak dimensions from previous failed reviews
-    let previousWeakDims: string[] = [];
-    try {
-      const content = await this.app.vault.read(item.file);
-      const recSection = content.match(/## 复习记录\n([\s\S]*)/)?.[1] ?? "";
-      const lastFail = recSection.match(/### .+? · ✗ 未通过\n([\s\S]*?)(?=\n###|$)/)?.[1] ?? "";
-      previousWeakDims = (lastFail.match(/- .+?：✗[^\n]*/g) ?? []).map(l => l.replace(/^- /, "").trim());
-    } catch { /* optional */ }
 
     const row = this.btnRow(session);
     this.btn(row, "取消", "secondary", () => { session.remove(); });
@@ -1243,7 +1238,7 @@ class FeynmanSettingTab extends PluginSettingTab {
       .addText(t => t.setPlaceholder("secret_...").setValue(this.plugin.settings.notionToken)
         .then(t => { t.inputEl.type = "password"; })
         .onChange(async v => { this.plugin.settings.notionToken = v; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("Notion 数据库 ID").setDesc("已预填为你的「学习概念库」")
+    new Setting(containerEl).setName("Notion 数据库 ID").setDesc("填写后可同步到你的 Notion 数据库")
       .addText(t => t.setPlaceholder("数据库 ID").setValue(this.plugin.settings.notionDatabaseId)
         .onChange(async v => { this.plugin.settings.notionDatabaseId = v; await this.plugin.saveSettings(); }));
   }
