@@ -364,3 +364,26 @@
 .feynman-extract-chip-info { flex: 1; cursor: pointer; padding: 8px 12px; border-radius: 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); transition: all 0.15s; }
 .feynman-extract-chip-info:hover { border-color: var(--color-accent); }
 .feynman-extract-add { padding: 4px 8px; font-size: 0.85rem; border-radius: 6px; flex-shrink: 0; min-width: 32px; }
+
+/* ── Phase 2: review sort & batch ─────────────────────────────────────────── */
+
+/* Review card header with controls */
+.feynman-review-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.feynman-review-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+/* Sort tabs */
+.feynman-sort-tabs { display: flex; gap: 2px; background: var(--background-modifier-border); border-radius: 6px; padding: 2px; }
+.feynman-sort-tab { padding: 3px 9px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); transition: all 0.15s; }
+.feynman-sort-tab:hover { color: var(--text-normal); }
+.feynman-sort-tab.active { background: var(--background-primary); color: var(--text-normal); font-weight: 600; }
+
+/* Overdue badge */
+.feynman-review-name-row { display: flex; align-items: center; gap: 6px; }
+.feynman-overdue-badge { font-size: 0.7rem; padding: 1px 6px; border-radius: 10px; background: #c0392b22; color: #c0392b; font-weight: 600; flex-shrink: 0; }
+
+/* Batch mode */
+.feynman-batch-wrap { padding: 16px; }
+.feynman-batch-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.feynman-batch-progress-label { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
+.feynman-batch-bar { flex: 1; height: 6px; }
+.feynman-batch-skip-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
