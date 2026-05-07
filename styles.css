@@ -297,6 +297,12 @@
 /* Stat sub-label */
 .feynman-stat-sub { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; }
 
+/* Step 2 reference details */
+.feynman-ref-details { margin-bottom: 12px; }
+.feynman-ref-summary { font-size: 0.8rem; color: var(--text-muted); cursor: pointer; user-select: none; padding: 4px 0; }
+.feynman-ref-summary:hover { color: var(--text-normal); }
+.feynman-ref-content { margin-top: 8px; padding: 10px 12px; background: var(--background-primary); border-radius: 6px; font-size: 0.85rem; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap; }
+
 /* Review gaps context */
 .feynman-review-gaps { background: var(--background-modifier-border); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
 
