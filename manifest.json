@@ -1,7 +1,7 @@
 {
   "id": "feynman-learning",
   "name": "Feynman Learning",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minAppVersion": "0.15.0",
   "description": "Learn concepts deeply using the Feynman Technique — AI-guided explanation, gap analysis, spaced repetition review, and Notion sync.",
   "author": "Xiaoxiaoqi",
