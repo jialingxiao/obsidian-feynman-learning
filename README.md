@@ -2,13 +2,26 @@
 
 Learn anything deeply using the **Feynman Technique**: explain it simply, find the gaps, and fill them. This plugin guides you through all four steps inside Obsidian, with AI assistance powered by any OpenAI-compatible API (DeepSeek, GPT-4o, Claude, local models via Ollama, etc.).
 
+## Screenshots
+
+> **To add screenshots**: open the plugin panel in Obsidian, take a screenshot of each major view, and place the images in a `docs/` folder. Then replace the placeholders below.
+
+| Dashboard | Review session | Concept extraction |
+|-----------|---------------|-------------------|
+| *(dashboard.png)* | *(review.png)* | *(extract.png)* |
+
 ## Features
 
 - **4-step guided workflow** — Select concept → Explain simply → Identify gaps → Simplify & analogize
 - **AI tutor** — Follow-up questioning, gap analysis, quiz generation, and learning recommendations
-- **Text extraction** — Paste an article or notes; AI extracts 3–8 core concepts with a suggested learning order
-- **Spaced repetition review** — Intervals at 1 / 7 / 30 days, dynamically shortened when understanding is partial
+- **Text extraction + learning queue** — Paste an article; AI extracts 3–8 concepts. Add any or all to a queue and work through them in order from the dashboard
+- **Filename preview** — Edit the save filename before writing to vault (Step 4)
+- **Spaced repetition review** — Intervals at 1 / 7 / 30 days with three quality tiers:
+  - All ✓ ("很熟练") → interval × 1.3
+  - Any △ (partial) → interval × 0.6
+  - Fail → retry tomorrow
 - **3-dimension AI judgment** — Reviews scored on 语言简洁 / 核心机制 / 举例说明 (✓ △ ✗) before advancing mastery
+- **Weak-point drill** — After a failed or partial review, click "🎯 专项练习" to get AI-generated targeted questions for the exact weak dimensions, with per-question feedback
 - **Weak-point tracking** — Failed review dimensions are saved to the note and surfaced on the next review session
 - **Mastery tracking** — Four levels: 初识 → 理解 → 掌握 → 精通, upgraded only after passing AI evaluation
 - **Review pass rate** — Per-concept and overall historical pass rate in the dashboard and concept browser
@@ -66,9 +79,14 @@ Click the brain icon (🧠) in the left ribbon to open the Feynman Learning pane
 Due concepts appear in the **Review** section of the dashboard. The AI scores your re-explanation on three dimensions and decides whether to advance the mastery level. If a previous review failed, those weak dimensions are shown above the input so you know what to focus on.
 
 Review intervals adjust dynamically:
-- All ✓ → standard interval (1 / 7 / 30 days)
-- Any △ (partial) → interval × 0.6
-- Fail → retry tomorrow; weak dimensions saved to note for next session
+
+| Result | Next interval | Button appears |
+|--------|--------------|----------------|
+| All ✓ (很熟练) | × 1.3 (longer) | — |
+| Any △ (partial pass) | × 0.6 (shorter) | 🎯 强化弱点 |
+| Fail | 1 day | 🎯 专项练习 |
+
+Clicking **🎯 专项练习 / 🎯 强化弱点** opens an inline drill: the AI generates 2–3 targeted questions for the specific weak or partial dimensions. Submit answers for per-question feedback, or retry as many times as needed.
 
 ### Weekly report
 

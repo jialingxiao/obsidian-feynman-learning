@@ -186,6 +186,7 @@ class FeynmanView extends ItemView {
 
   private renderStep0(parent: HTMLElement) {
     this.renderDashboard(parent);
+    this.renderQueue(parent);
     this.renderDueReviews(parent);
     this.renderHistory(parent);
     this.renderStartCard(parent);
@@ -253,6 +254,32 @@ class FeynmanView extends ItemView {
       const cell = grid.createDiv({
         cls: `feynman-heatmap-cell ${active ? "active" : ""}`,
         attr: { title: d + (active ? " ✓" : "") },
+      });
+    }
+  }
+
+  private renderQueue(parent: HTMLElement) {
+    const queue = this.plugin.learningQueue;
+    if (queue.length === 0) return;
+    const card = parent.createDiv("feynman-card feynman-queue-card");
+    this.badge(card, `📋 学习队列 · ${queue.length} 个`);
+    card.createEl("h2", { text: "准备学习的概念" });
+    const list = card.createDiv("feynman-queue-list");
+    for (const concept of [...queue]) {
+      const row = list.createDiv("feynman-queue-item");
+      row.createSpan({ cls: "feynman-queue-name", text: concept });
+      const btns = row.createDiv("feynman-queue-btns");
+      this.btn(btns, "开始学习 →", "primary", async () => {
+        await this.plugin.removeFromQueue(concept);
+        this.state = emptyState();
+        this.state.concept = concept;
+        this.state.step = 1;
+        this.render();
+      });
+      this.btn(btns, "✕", "secondary", async () => {
+        await this.plugin.removeFromQueue(concept);
+        row.remove();
+        if (list.children.length === 0) card.remove();
       });
     }
   }
@@ -541,12 +568,29 @@ class FeynmanView extends ItemView {
         if (concepts.length === 0) { new Notice("未能提取到概念，请换一段文本"); return; }
 
         const results = extractBody.createDiv("feynman-extract-results");
-        results.createDiv({ cls: "feynman-ai-label", text: `提取到 ${concepts.length} 个概念，点击填入` });
+        const headerRow = results.createDiv("feynman-extract-header");
+        headerRow.createDiv({ cls: "feynman-ai-label", text: `提取到 ${concepts.length} 个概念` });
+        const addAllBtn = headerRow.createEl("button", { cls: "feynman-btn feynman-btn-secondary feynman-extract-add-all", text: "全部加入队列" });
+        addAllBtn.addEventListener("click", async () => {
+          for (const c of concepts) await this.plugin.addToQueue(c.name);
+          addAllBtn.textContent = `✓ 已加入 ${concepts.length} 个`;
+          addAllBtn.disabled = true;
+          new Notice(`已将 ${concepts.length} 个概念加入学习队列`);
+        });
         for (const c of concepts) {
           const chip = results.createDiv({ cls: "feynman-extract-chip" });
-          chip.createSpan({ cls: "feynman-extract-name", text: c.name });
-          if (c.reason) chip.createSpan({ cls: "feynman-extract-reason", text: c.reason });
-          chip.addEventListener("click", () => { nameInp.value = c.name; nameInp.scrollIntoView({ behavior: "smooth" }); });
+          const info = chip.createDiv({ cls: "feynman-extract-chip-info" });
+          info.createSpan({ cls: "feynman-extract-name", text: c.name });
+          if (c.reason) info.createSpan({ cls: "feynman-extract-reason", text: c.reason });
+          info.addEventListener("click", () => { nameInp.value = c.name; nameInp.scrollIntoView({ behavior: "smooth" }); });
+          const addBtn = chip.createEl("button", { cls: "feynman-btn feynman-extract-add", text: "＋" });
+          addBtn.title = "加入学习队列";
+          addBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            await this.plugin.addToQueue(c.name);
+            addBtn.textContent = "✓";
+            addBtn.disabled = true;
+          });
         }
       } catch (e: any) {
         new Notice("AI 请求失败：" + e.message);
@@ -833,11 +877,7 @@ class FeynmanView extends ItemView {
     }
 
     const row = this.btnRow(card);
-    const saveBtn = this.btn(row, "💾 保存到 vault", "primary", async () => {
-      saveBtn.disabled = true; saveBtn.textContent = "保存中…";
-      await this.saveNote(parent);
-      saveBtn.disabled = false; saveBtn.textContent = "💾 已保存";
-    });
+    this.btn(row, "💾 保存到 vault", "primary", () => { this.showSavePreview(card, parent); });
     this.btn(row, "🧪 AI 测验", "warn", async () => { await this.startQuiz(parent); });
     this.btn(row, "📋 复制", "secondary", () => {
       navigator.clipboard.writeText(this.buildNoteContent(moment().format("YYYY-MM-DD")));
@@ -852,6 +892,26 @@ class FeynmanView extends ItemView {
     if (this.state.recommendations.length > 0) {
       this.renderRecommendations(parent);
     }
+  }
+
+  private showSavePreview(card: HTMLElement, parent?: HTMLElement) {
+    card.querySelector(".feynman-save-preview")?.remove();
+    const preview = card.createDiv("feynman-save-preview");
+    preview.createDiv({ cls: "feynman-ai-label", text: "💾 确认文件名" });
+    const date = moment().format("YYYY-MM-DD");
+    const defaultStem = `${date} ${sanitizeFilename(this.state.concept)}`;
+    preview.createDiv({ cls: "feynman-hint", text: `保存位置：${this.plugin.settings.notesFolder}/` });
+    this.lbl(preview, "文件名（.md 自动添加）");
+    const nameInp = this.inp(preview, "文件名……", defaultStem);
+    const btnRow = this.btnRow(preview);
+    this.btn(btnRow, "取消", "secondary", () => preview.remove());
+    const confirmBtn = this.btn(btnRow, "确认保存", "primary", async () => {
+      const stem = nameInp.value.trim();
+      if (!stem) { new Notice("请输入文件名"); return; }
+      confirmBtn.disabled = true; confirmBtn.textContent = "保存中…";
+      await this.saveNote(parent, stem);
+      confirmBtn.textContent = "✓ 已保存";
+    });
   }
 
   private renderRecommendations(parent: HTMLElement) {
@@ -1000,12 +1060,12 @@ ${quizSection}
 `;
   }
 
-  private async saveNote(parent?: HTMLElement) {
+  private async saveNote(parent?: HTMLElement, customStem?: string) {
     const { vault } = this.app;
     const folder = this.plugin.settings.notesFolder;
     const date = moment().format("YYYY-MM-DD");
-    const safeTitle = sanitizeFilename(this.state.concept);
-    const filename = `${folder}/${date} ${safeTitle}.md`;
+    const stem = customStem ?? `${date} ${sanitizeFilename(this.state.concept)}`;
+    const filename = `${folder}/${stem}.md`;
 
     if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
 
@@ -1013,7 +1073,7 @@ ${quizSection}
     const existing = vault.getAbstractFileByPath(filename);
     existing instanceof TFile ? await vault.modify(existing, content) : await vault.create(filename, content);
 
-    await this.updateIndex(date);
+    await this.updateIndex(stem, date);
     await this.plugin.recordLearningDate();
 
     // Notion sync
@@ -1049,11 +1109,11 @@ ${quizSection}
     }
   }
 
-  private async updateIndex(date: string) {
+  private async updateIndex(stem: string, date: string) {
     const { vault } = this.app;
     const file = vault.getAbstractFileByPath(this.plugin.settings.indexFile);
     if (!(file instanceof TFile)) return;
-    const noteLink = `[[${this.plugin.settings.notesFolder}/${date} ${sanitizeFilename(this.state.concept)}|${this.state.concept}]]`;
+    const noteLink = `[[${this.plugin.settings.notesFolder}/${stem}|${this.state.concept}]]`;
     const content = await vault.read(file);
     const updated = content.replace(/(\| *\n*$)/m, `| ${noteLink} | | 初识 | 进行中 | ${date} |\n$1`);
     if (updated !== content) await vault.modify(file, updated);
@@ -1404,12 +1464,14 @@ export default class FeynmanPlugin extends Plugin {
   settings: FeynmanSettings;
   learningDates: string[] = [];
   reviewHistory: ReviewRecord[] = [];
+  learningQueue: string[] = [];
 
   async onload() {
     await this.loadSettings();
     const data = await this.loadData();
     this.learningDates = data?.learningDates ?? [];
     this.reviewHistory = data?.reviewHistory ?? [];
+    this.learningQueue = data?.learningQueue ?? [];
 
     this.registerView(VIEW_TYPE, leaf => new FeynmanView(leaf, this));
     this.addRibbonIcon("brain", "费曼学习法", () => this.activateView());
@@ -1557,6 +1619,18 @@ export default class FeynmanPlugin extends Plugin {
     const total = this.reviewHistory.length;
     const rate = total === 0 ? "—" : `${Math.round(passed / total * 100)}%`;
     return { total, passed, rate };
+  }
+
+  async addToQueue(concept: string) {
+    if (!this.learningQueue.includes(concept)) {
+      this.learningQueue.push(concept);
+      await this.saveData({ ...(await this.loadData()), learningQueue: this.learningQueue });
+    }
+  }
+
+  async removeFromQueue(concept: string) {
+    this.learningQueue = this.learningQueue.filter(c => c !== concept);
+    await this.saveData({ ...(await this.loadData()), learningQueue: this.learningQueue });
   }
 
   async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
