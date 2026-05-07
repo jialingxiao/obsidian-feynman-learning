@@ -297,6 +297,18 @@
 /* Stat sub-label */
 .feynman-stat-sub { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; }
 
+/* Text extraction */
+.feynman-extract-toggle { display: flex; align-items: center; gap: 6px; margin-top: 14px; cursor: pointer; user-select: none; }
+.feynman-extract-toggle-label { font-size: 0.82rem; color: var(--text-muted); transition: color 0.15s; }
+.feynman-extract-toggle:hover .feynman-extract-toggle-label { color: var(--color-accent); }
+.feynman-extract-toggle.open .feynman-extract-toggle-label { color: var(--color-accent); }
+.feynman-extract-body { margin-top: 10px; }
+.feynman-extract-results { margin-top: 10px; display: grid; gap: 6px; }
+.feynman-extract-chip { padding: 8px 12px; border-radius: 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); cursor: pointer; transition: all 0.15s; }
+.feynman-extract-chip:hover { border-color: var(--color-accent); }
+.feynman-extract-name { font-weight: 600; font-size: 0.88rem; display: block; }
+.feynman-extract-reason { font-size: 0.78rem; color: var(--text-muted); display: block; margin-top: 2px; }
+
 /* Step 2 reference details */
 .feynman-ref-details { margin-bottom: 12px; }
 .feynman-ref-summary { font-size: 0.8rem; color: var(--text-muted); cursor: pointer; user-select: none; padding: 4px 0; }
