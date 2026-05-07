@@ -55,6 +55,7 @@ interface FeynmanState {
   quizAnswers: string[];
   quizFeedback: string;
   recommendations: string[];
+  savedStem: string;  // actual filename stem used when the note was last saved
 }
 
 interface DueConcept { file: TFile; concept: string; reviewCount: number; }
@@ -66,6 +67,7 @@ function emptyState(): FeynmanState {
     step: 0, concept: "", why: "", explanation: "",
     aiHistory: [], gaps: "", finalExplanation: "", analogy: "",
     quizQuestions: [], quizAnswers: [], quizFeedback: "", recommendations: [],
+    savedStem: "",
   };
 }
 
@@ -899,7 +901,7 @@ class FeynmanView extends ItemView {
     const preview = card.createDiv("feynman-save-preview");
     preview.createDiv({ cls: "feynman-ai-label", text: "💾 确认文件名" });
     const date = moment().format("YYYY-MM-DD");
-    const defaultStem = `${date} ${sanitizeFilename(this.state.concept)}`;
+    const defaultStem = this.state.savedStem || `${date} ${sanitizeFilename(this.state.concept)}`;
     preview.createDiv({ cls: "feynman-hint", text: `保存位置：${this.plugin.settings.notesFolder}/` });
     this.lbl(preview, "文件名（.md 自动添加）");
     const nameInp = this.inp(preview, "文件名……", defaultStem);
@@ -989,7 +991,7 @@ class FeynmanView extends ItemView {
       } catch (e: any) { new Notice("AI 请求失败：" + e.message); evalBtn.disabled = false; evalBtn.textContent = "提交，让 AI 评价"; }
     });
     if (this.state.quizFeedback) {
-      this.btn(row, "💾 保存并结束", "primary", async () => { await this.saveNote(parent); });
+      this.btn(row, "💾 保存并结束", "primary", () => { this.showSavePreview(card, parent); });
     }
   }
 
@@ -1072,6 +1074,7 @@ ${quizSection}
     const content = this.buildNoteContent(date);
     const existing = vault.getAbstractFileByPath(filename);
     existing instanceof TFile ? await vault.modify(existing, content) : await vault.create(filename, content);
+    this.state.savedStem = stem;
 
     await this.updateIndex(stem, date);
     await this.plugin.recordLearningDate();
@@ -1360,8 +1363,8 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
 
       const btnRow = card.createDiv("feynman-btn-row");
       this.btn(btnRow, "添加关联链接到笔记", "secondary", async () => {
-        const date = moment().format("YYYY-MM-DD");
-        const filename = `${this.plugin.settings.notesFolder}/${date} ${sanitizeFilename(concept)}.md`;
+        const stem = this.state.savedStem || `${moment().format("YYYY-MM-DD")} ${sanitizeFilename(concept)}`;
+        const filename = `${this.plugin.settings.notesFolder}/${stem}.md`;
         const file = this.app.vault.getAbstractFileByPath(filename);
         if (!(file instanceof TFile)) { new Notice("请先保存笔记再添加关联"); return; }
         const content = await this.app.vault.read(file);
