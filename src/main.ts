@@ -206,6 +206,11 @@ class FeynmanView extends ItemView {
         item.createSpan({ text: `${level} ${count}` });
       }
     }
+
+    const reportRow = card.createDiv("feynman-btn-row");
+    this.btn(reportRow, "📊 生成本周报告", "secondary", async () => {
+      await this.generateWeeklyReport();
+    });
   }
 
   private renderHeatmap(parent: HTMLElement) {
@@ -624,6 +629,9 @@ class FeynmanView extends ItemView {
       navigator.clipboard.writeText(this.buildNoteContent(moment().format("YYYY-MM-DD")));
       new Notice("笔记已复制到剪贴板");
     });
+    this.btn(row, "🔗 概念关联", "secondary", async () => {
+      await this.findConceptConnections(this.state.concept, parent);
+    });
     this.btn(row, "学下一个 →", "secondary", () => { this.state = emptyState(); this.render(); });
 
     // Show recommendations if already fetched
@@ -853,6 +861,140 @@ ${quizSection}
     if (!resp.ok) { const err = await resp.json(); throw new Error(err.message || resp.statusText); }
   }
 
+  private async generateWeeklyReport() {
+    const weekData = this.plugin.getWeeklyData();
+    const isoWeek = moment().isoWeek();
+    const weekStr = `${moment().isoWeekYear()}-W${String(isoWeek).padStart(2, "0")}`;
+    const weekStart = moment().startOf("isoWeek").format("YYYY-MM-DD");
+    const weekEnd = moment().endOf("isoWeek").format("YYYY-MM-DD");
+
+    new Notice("生成周报中…");
+
+    let aiReflection = "";
+    if (this.plugin.settings.apiKey) {
+      try {
+        const statsText = `本周新学概念 ${weekData.newConcepts.length} 个（${weekData.newConcepts.map(c => c.concept).join("、") || "无"}），复习 ${weekData.reviews.length} 次，通过率 ${weekData.passRate}，连续学习 ${this.plugin.calcStreak()} 天。`;
+        aiReflection = await this.callDeepSeek([
+          { role: "system", content: "你是一个温暖的学习教练。根据用户本周的学习数据，写一段简短的学习反思（100字以内），肯定进步，给出下周一个具体的学习建议。用中文，语气轻松友好。" },
+          { role: "user", content: statsText },
+        ], 300);
+      } catch { /* optional */ }
+    }
+
+    const conceptSection = weekData.newConcepts.length > 0
+      ? weekData.newConcepts.map(c => `- [[${this.plugin.settings.notesFolder}/${c.date} ${c.concept}|${c.concept}]] · ${c.mastery}`).join("\n")
+      : "本周暂无新概念";
+
+    const reviewRows = weekData.reviews.map(r =>
+      `| ${r.concept} | ${r.date} | ${r.passed ? "✓ 通过" : "✗ 未通过"} |`
+    ).join("\n");
+
+    const content = `---
+tags: [费曼周报]
+week: ${weekStr}
+---
+
+# 📊 费曼学习周报 · ${moment().isoWeekYear()}年第${isoWeek}周
+> ${weekStart} ～ ${weekEnd}
+
+## 数据概览
+
+| 指标 | 本周 |
+|------|------|
+| 新学概念 | ${weekData.newConcepts.length} 个 |
+| 完成复习 | ${weekData.reviews.length} 次 |
+| 复习通过率 | ${weekData.passRate} |
+| 连续学习 | ${this.plugin.calcStreak()} 天 |
+
+## 本周学习的概念
+
+${conceptSection}
+
+## 本周复习情况
+
+${reviewRows ? `| 概念 | 日期 | 结果 |\n|------|------|------|\n${reviewRows}` : "本周暂无复习记录"}
+${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
+
+    const folder = "费曼周报";
+    const { vault } = this.app;
+    if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
+    const filename = `${folder}/${weekStr}.md`;
+    const existing = vault.getAbstractFileByPath(filename);
+    existing instanceof TFile ? await vault.modify(existing, content) : await vault.create(filename, content);
+    const file = vault.getAbstractFileByPath(filename);
+    if (file instanceof TFile) await this.app.workspace.getLeaf("tab").openFile(file);
+    new Notice(`周报已生成 ✓`);
+  }
+
+  private async findConceptConnections(concept: string, parent: HTMLElement) {
+    const allConcepts = this.plugin.getAllConcepts().map(c => c.concept).filter(c => c !== concept);
+    if (allConcepts.length < 2) {
+      new Notice("至少需要学过 2 个其他概念才能发现关联");
+      return;
+    }
+
+    parent.querySelector(".feynman-connections-card")?.remove();
+    const card = parent.createDiv("feynman-card feynman-connections-card");
+    card.createDiv({ cls: "feynman-ai-label", text: "🔗 分析关联中…" });
+
+    try {
+      const result = await this.callDeepSeek([
+        { role: "system", content: "你是一个知识关联专家。从给定的已学概念列表中，找出与目标概念最相关的最多3个概念，并用一句话说明关联方式。严格按格式输出，每行：概念名 | 关联说明。不超过3行。如果确实没有相关概念就输出「无」。" },
+        { role: "user", content: `目标概念：「${concept}」\n已学概念：${allConcepts.join("、")}` },
+      ], 300);
+
+      card.empty();
+      card.createDiv({ cls: "feynman-ai-label", text: "🔗 相关概念" });
+
+      if (result.trim() === "无" || !result.includes("|")) {
+        card.createDiv({ cls: "feynman-hint", text: "暂时没有发现强关联，继续学习更多概念后再试" });
+        return;
+      }
+
+      const connections: { name: string; desc: string }[] = [];
+      for (const line of result.split("\n").filter(l => l.includes("|")).slice(0, 3)) {
+        const parts = line.split("|");
+        const name = parts[0].replace(/「|」/g, "").trim();
+        const desc = parts[1]?.trim() ?? "";
+        if (name && desc) connections.push({ name, desc });
+      }
+
+      if (connections.length === 0) {
+        card.createDiv({ cls: "feynman-hint", text: "暂时没有发现强关联" });
+        return;
+      }
+
+      const grid = card.createDiv("feynman-connections-grid");
+      for (const conn of connections) {
+        const item = grid.createDiv("feynman-connection-item");
+        const match = this.plugin.getAllConcepts().find(c => c.concept === conn.name);
+        const nameEl = item.createDiv({ cls: `feynman-connection-name${match ? " feynman-connection-link" : ""}`, text: conn.name });
+        if (match) nameEl.addEventListener("click", () => this.app.workspace.getLeaf("tab").openFile(match.file));
+        item.createDiv({ cls: "feynman-connection-desc", text: conn.desc });
+      }
+
+      const btnRow = card.createDiv("feynman-btn-row");
+      this.btn(btnRow, "添加关联链接到笔记", "secondary", async () => {
+        const date = moment().format("YYYY-MM-DD");
+        const filename = `${this.plugin.settings.notesFolder}/${date} ${concept}.md`;
+        const file = this.app.vault.getAbstractFileByPath(filename);
+        if (!(file instanceof TFile)) { new Notice("请先保存笔记再添加关联"); return; }
+        const content = await this.app.vault.read(file);
+        if (content.includes("## 相关概念")) { new Notice("关联链接已存在"); return; }
+        const links = connections.map(c => {
+          const m = this.plugin.getAllConcepts().find(x => x.concept === c.name);
+          return m ? `- [[${m.file.path}|${c.name}]]：${c.desc}` : `- ${c.name}：${c.desc}`;
+        }).join("\n");
+        await this.app.vault.modify(file, content + `\n## 相关概念\n\n${links}\n`);
+        new Notice("关联链接已添加到笔记 ✓");
+      });
+
+    } catch (e: any) {
+      card.empty();
+      card.createDiv({ cls: "feynman-hint", text: "AI 请求失败：" + e.message });
+    }
+  }
+
   loadConcept(concept: string) {
     this.state = emptyState();
     this.state.concept = concept;
@@ -983,7 +1125,7 @@ export default class FeynmanPlugin extends Plugin {
     return { total: all.length, thisWeek, dueCount: this.getDueConcepts().length, streak: this.calcStreak(), mastery };
   }
 
-  private calcStreak(): number {
+  calcStreak(): number {
     const dates = [...new Set(this.learningDates)].sort().reverse();
     if (dates.length === 0) return 0;
     const today = moment().format("YYYY-MM-DD");
@@ -1032,6 +1174,15 @@ export default class FeynmanPlugin extends Plugin {
     const passed = records.filter(r => r.passed).length;
     const rate = records.length === 0 ? "—" : `${Math.round(passed / records.length * 100)}%`;
     return { total: records.length, passed, rate };
+  }
+
+  getWeeklyData(): { newConcepts: ConceptMeta[]; reviews: ReviewRecord[]; passRate: string } {
+    const weekStart = moment().startOf("isoWeek").format("YYYY-MM-DD");
+    const newConcepts = this.getAllConcepts().filter(c => c.date >= weekStart);
+    const reviews = this.reviewHistory.filter(r => r.date >= weekStart);
+    const passed = reviews.filter(r => r.passed).length;
+    const passRate = reviews.length === 0 ? "—" : `${Math.round(passed / reviews.length * 100)}%`;
+    return { newConcepts, reviews, passRate };
   }
 
   getOverallReviewStats(): { total: number; passed: number; rate: string } {

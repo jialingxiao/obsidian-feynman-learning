@@ -293,3 +293,14 @@
 
 /* Settings description */
 .feynman-settings-desc { font-size: 0.83rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; }
+
+/* Stat sub-label */
+.feynman-stat-sub { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; }
+
+/* Concept connections */
+.feynman-connections-grid { display: grid; gap: 8px; margin: 8px 0; }
+.feynman-connection-item { background: var(--background-primary); border-radius: 6px; padding: 8px 10px; }
+.feynman-connection-name { font-weight: 600; font-size: 0.88rem; margin-bottom: 2px; }
+.feynman-connection-link { color: var(--color-accent); cursor: pointer; }
+.feynman-connection-link:hover { text-decoration: underline; }
+.feynman-connection-desc { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; }
