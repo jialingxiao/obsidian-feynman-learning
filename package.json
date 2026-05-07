@@ -1,6 +1,6 @@
 {
   "name": "feynman-learning",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "费曼学习法 Obsidian 插件",
   "main": "main.js",
   "scripts": {
