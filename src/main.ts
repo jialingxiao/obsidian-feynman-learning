@@ -384,15 +384,17 @@ class FeynmanView extends ItemView {
 
         const actionRow = this.btnRow(resultEl);
         if (passed) {
-          const nextInterval = REVIEW_INTERVALS[item.reviewCount] ?? null;
+          const hasNextReview = REVIEW_INTERVALS[item.reviewCount] != null;
           const nextMastery = MASTERY_LEVELS[Math.min(item.reviewCount + 1, 3)];
+          const rawNextDays = REVIEW_INTERVALS[item.reviewCount + 1] ?? 30;
+          const actualNextDays = partialPass ? Math.max(1, Math.round(rawNextDays * 0.6)) : rawNextDays;
           const btnLabel = partialPass
-            ? `升级为「${nextMastery}」（部分掌握，缩短间隔）→`
+            ? `升级为「${nextMastery}」（部分掌握，${actualNextDays} 天后复习）→`
             : `升级为「${nextMastery}」→`;
           this.btn(actionRow, btnLabel, "primary", async () => {
             await this.plugin.markReviewed(item.file, item.reviewCount, true, partialPass);
-            new Notice(nextInterval
-              ? `「${item.concept}」已升级为「${nextMastery}」，${REVIEW_INTERVALS[item.reviewCount + 1] ?? 30} 天后再提醒`
+            new Notice(hasNextReview
+              ? `「${item.concept}」已升级为「${nextMastery}」，${actualNextDays} 天后再提醒`
               : `「${item.concept}」已达到精通！`
             );
             this.render();
