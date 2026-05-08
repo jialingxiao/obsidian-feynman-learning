@@ -171,25 +171,30 @@ class FeynmanView extends ItemView {
    * Unified AI button state helper.
    * Disables the button and shows loadingText while fn() runs.
    * On error: logs to console + shows Notice (unless silent=true), then restores button.
-   * Always restores button text/state in finally.
+   * On success: restores button unless keepDisabledOnSuccess=true, which lets fn() set
+   *   its own post-success label/state before returning (e.g. "再练一次" or stay disabled).
    */
   private async withAiBtn(
     btn: HTMLButtonElement,
     loadingText: string,
     fn: () => Promise<void>,
-    { silent = false }: { silent?: boolean } = {}
+    { silent = false, keepDisabledOnSuccess = false }: { silent?: boolean; keepDisabledOnSuccess?: boolean } = {}
   ): Promise<void> {
     const original = btn.textContent ?? "";
     btn.disabled = true;
     btn.textContent = loadingText;
+    let succeeded = false;
     try {
       await fn();
+      succeeded = true;
     } catch (e: any) {
       console.error("费曼插件 AI 请求失败", e);
       if (!silent) new Notice("AI 请求失败：" + e.message);
     } finally {
-      btn.disabled = false;
-      btn.textContent = original;
+      if (!keepDisabledOnSuccess || !succeeded) {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     }
   }
 
@@ -477,15 +482,11 @@ class FeynmanView extends ItemView {
     const row = this.btnRow(session);
     this.btn(row, "取消", "secondary", () => { session.remove(); });
 
-    const judgeBtn = this.btn(row, "AI 评判 →", "primary", async () => {
+    const judgeBtn = this.btn(row, "AI 评判 →", "primary", () => {
       const exp = expTA.value.trim();
       if (!exp) { new Notice("请先写出你的解释"); return; }
-
-      judgeBtn.disabled = true;
-      judgeBtn.textContent = "AI 评判中…";
       resultEl.style.display = "none";
-
-      try {
+      void this.withAiBtn(judgeBtn, "AI 评判中…", async () => {
         const gapsContext = previousGaps ? `\n\n上次学习时记录的知识漏洞：\n${previousGaps}` : "";
         const verdict = await this.plugin.callAI([
           {
@@ -576,11 +577,7 @@ class FeynmanView extends ItemView {
             expTA.focus();
           });
         }
-      } catch (e: any) {
-        new Notice("AI 请求失败：" + e.message);
-        judgeBtn.disabled = false;
-        judgeBtn.textContent = "AI 评判 →";
-      }
+      }, { keepDisabledOnSuccess: true });
     });
   }
 
@@ -850,21 +847,27 @@ class FeynmanView extends ItemView {
     const replyTA = this.ta(card, "回答 AI 的追问……");
 
     const row = this.btnRow(card);
-    this.btn(row, "继续追问", "secondary", async () => {
+    const followupBtn = row.createEl("button", { cls: "feynman-btn feynman-btn-secondary", text: "继续追问" });
+    followupBtn.addEventListener("click", () => {
       const reply = replyTA.value.trim();
       if (!reply) { new Notice("请先回答 AI 的问题"); return; }
       this.state.aiHistory.push({ role: "user", content: reply });
-      msgEl.textContent = "思考中…";
-      try {
-        const aiReply = await this.plugin.callAI(this.state.aiHistory);
-        this.state.aiHistory.push({ role: "assistant", content: aiReply });
-        msgEl.textContent = aiReply; replyTA.value = "";
-      } catch (e: any) { new Notice("AI 请求失败：" + e.message); msgEl.textContent = lastAI.content; }
+      void this.withAiBtn(followupBtn, "追问中…", async () => {
+        msgEl.textContent = "思考中…";
+        try {
+          const aiReply = await this.plugin.callAI(this.state.aiHistory);
+          this.state.aiHistory.push({ role: "assistant", content: aiReply });
+          msgEl.textContent = aiReply;
+          replyTA.value = "";
+        } catch (e) {
+          msgEl.textContent = lastAI.content; // restore AI message on error
+          throw e;                             // re-throw so withAiBtn logs + shows Notice
+        }
+      });
     });
 
-    const summaryBtn = this.btn(row, "AI 总结我的漏洞", "warn", async () => {
-      summaryBtn.disabled = true; summaryBtn.textContent = "分析中…";
-      try {
+    const summaryBtn = this.btn(row, "AI 总结我的漏洞", "warn", () => {
+      void this.withAiBtn(summaryBtn, "分析中…", async () => {
         const gaps = await this.plugin.callAI([
           { role: "system", content: "你是一个学习教练。根据以下对话，列出学生最可能还没搞清楚的3个知识点。格式：每点一行，前面加「·」，简洁，用中文。" },
           { role: "user", content: `概念：${this.state.concept}\n\n对话：\n${this.state.aiHistory.filter(m => m.role !== "system").map(m => `${m.role === "user" ? "学生" : "提问者"}：${m.content}`).join("\n\n")}` },
@@ -876,8 +879,7 @@ class FeynmanView extends ItemView {
         gc.createDiv({ cls: "feynman-ai-message", text: gaps });
         const gr = this.btnRow(gc);
         this.btn(gr, "带着这些漏洞继续 →", "primary", () => { this.state.step = 2; this.render(); });
-      } catch (e: any) { new Notice("AI 请求失败：" + e.message); }
-      finally { summaryBtn.disabled = false; summaryBtn.textContent = "AI 总结我的漏洞"; }
+      });
     });
 
     this.btn(row, "已找到漏洞 →", "primary", () => { this.state.step = 2; this.render(); });
@@ -1098,19 +1100,18 @@ class FeynmanView extends ItemView {
 
     const row = this.btnRow(card);
     this.btn(row, "← 返回总结", "secondary", () => { this.state.step = 4; this.render(); });
-    const evalBtn = this.btn(row, "提交，让 AI 评价", "primary", async () => {
+    const evalBtn = this.btn(row, "提交，让 AI 评价", "primary", () => {
       const answers = answerEls.map(el => el.value.trim());
       if (answers.some(a => !a)) { new Notice("请回答所有问题"); return; }
       this.state.quizAnswers = answers;
-      evalBtn.disabled = true; evalBtn.textContent = "AI 评价中…";
-      try {
+      void this.withAiBtn(evalBtn, "AI 评价中…", async () => {
         const feedback = await this.plugin.callAI([
           { role: "system", content: "你是一个耐心的老师，给出建设性评价，鼓励为主。用中文。" },
           { role: "user", content: `学生学习的概念是「${this.state.concept}」。请逐题评价（对✓/部分正确△/需改进✗）并给一句话反馈，最后给总体建议。\n\n${this.state.quizQuestions.map((q, i) => `题目${i + 1}：${q}\n学生回答：${this.state.quizAnswers[i]}`).join("\n\n")}` },
         ]);
         this.state.quizFeedback = feedback;
-        this.render();
-      } catch (e: any) { new Notice("AI 请求失败：" + e.message); evalBtn.disabled = false; evalBtn.textContent = "提交，让 AI 评价"; }
+        this.render(); // detaches evalBtn from DOM; finally restoring it is harmless
+      });
     });
     if (this.state.quizFeedback) {
       this.btn(row, "💾 保存并结束", "primary", () => { this.showSavePreview(card, parent); });
@@ -1323,11 +1324,10 @@ ${quizSection}
       }
 
       const btnRow = this.btnRow(drillCard);
-      const submitBtn = this.btn(btnRow, "提交答案，获取反馈", "primary", async () => {
+      const submitBtn = this.btn(btnRow, "提交答案，获取反馈", "primary", () => {
         const answers = answerEls.map(el => el.value.trim());
         if (answers.some(a => !a)) { new Notice("请回答所有练习题"); return; }
-        submitBtn.disabled = true; submitBtn.textContent = "AI 评价中…";
-        try {
+        void this.withAiBtn(submitBtn, "AI 评价中…", async () => {
           const feedback = await this.plugin.callAI([
             {
               role: "system",
@@ -1343,16 +1343,14 @@ ${quizSection}
           const fbEl = drillCard.createDiv("feynman-drill-feedback");
           fbEl.createDiv({ cls: "feynman-ai-label", text: "📝 练习反馈" });
           fbEl.createDiv({ cls: "feynman-ai-message", text: feedback });
+          // Set success state before returning — keepDisabledOnSuccess skips finally restore
           submitBtn.textContent = "再练一次";
           submitBtn.disabled = false;
           submitBtn.onclick = () => {
             answerEls.forEach(el => { el.value = ""; });
             drillCard.querySelector(".feynman-drill-feedback")?.remove();
           };
-        } catch (e: any) {
-          new Notice("AI 请求失败：" + e.message);
-          submitBtn.disabled = false; submitBtn.textContent = "提交答案，获取反馈";
-        }
+        }, { keepDisabledOnSuccess: true });
       });
     } catch (e: any) {
       loadingEl.textContent = "AI 请求失败：" + e.message;
