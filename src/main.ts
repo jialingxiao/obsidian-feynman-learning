@@ -15,6 +15,8 @@ import {
   REVIEW_INTERVALS,
   calcNextInterval,
   parseApiError,
+  parseExtractedConcepts,
+  parseReviewVerdict,
   sanitizeFilename,
   truncate,
   yamlStr,
@@ -496,32 +498,9 @@ class FeynmanView extends ItemView {
           { role: "user", content: `学生对「${item.concept}」的重新解释：\n${exp}${gapsContext}` },
         ]);
 
-        // Parse JSON response, with regex fallback for unexpected formats
+        // Parse the AI response into a structured verdict
         const SCORE_CLS: Record<string, string> = { "✓": "dim-pass", "△": "dim-partial", "✗": "dim-fail" };
-        let passed = false;
-        let dimensions: { label: string; score: string; note: string }[] = [];
-        let evalText = "";
-
-        const jsonMatch = verdict.match(/\{[\s\S]*\}/);
-        const parsedJson = jsonMatch
-          ? (() => { try { return JSON.parse(jsonMatch[0]); } catch { return null; } })()
-          : null;
-        if (parsedJson?.dimensions) {
-          passed = !!parsedJson.passed;
-          dimensions = (parsedJson.dimensions as { label: string; score: string; note: string }[])
-            .map(d => ({ label: String(d.label ?? ""), score: String(d.score ?? "✗"), note: String(d.note ?? "") }));
-          evalText = String(parsedJson.feedback ?? "");
-        } else {
-          // Fallback: regex parsing for legacy / unexpected format
-          console.warn("费曼插件：AI 评分未返回 JSON，回退到正则解析", verdict);
-          passed = verdict.includes("判定：通过");
-          for (const label of ["语言简洁", "核心机制", "举例说明"]) {
-            const re = new RegExp(`${label}：([✓△✗])(.*)`, "m");
-            const m = verdict.match(re);
-            if (m) dimensions.push({ label, score: m[1], note: m[2].trim() });
-          }
-          evalText = verdict.match(/评价：([\s\S]*)/)?.[1]?.trim() ?? "";
-        }
+        const { passed, dimensions, feedback: evalText } = parseReviewVerdict(verdict);
 
         resultEl.style.display = "block";
         resultEl.empty();
@@ -711,24 +690,7 @@ class FeynmanView extends ItemView {
           { role: "user", content: text.slice(0, 3000) },
         ], 500);
 
-        // JSON parsing with fallback to text parsing
-        let concepts: { name: string; reason: string }[] = [];
-        const arrMatch = result.match(/\[[\s\S]*\]/);
-        if (arrMatch) {
-          try {
-            concepts = (JSON.parse(arrMatch[0]) as { name: string; reason: string }[])
-              .filter(c => c?.name)
-              .map(c => ({ name: String(c.name).trim(), reason: String(c.reason ?? "").trim() }))
-              .slice(0, 8);
-          } catch { /* fall through to text parsing */ }
-        }
-        if (concepts.length === 0) {
-          console.warn("费曼插件：概念提取未返回 JSON，回退到文本解析", result);
-          concepts = result.split("\n").filter(l => l.trim()).map(l => {
-            const m = l.match(/「(.+?)」[—\-–]\s*(.*)/);
-            return m ? { name: m[1].trim(), reason: m[2].trim() } : { name: l.replace(/「|」/g, "").trim(), reason: "" };
-          }).filter(c => c.name).slice(0, 8);
-        }
+        const concepts = parseExtractedConcepts(result);
 
         extractBody.querySelector(".feynman-extract-results")?.remove();
         if (concepts.length === 0) { new Notice("未能提取到概念，请换一段文本"); return; }
@@ -1627,6 +1589,7 @@ export default class FeynmanPlugin extends Plugin {
   reviewHistory: ReviewRecord[] = [];
   learningQueue: string[] = [];
   pendingReviewFilePath: string | null = null;
+  private _conceptsCache: ConceptMeta[] | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -1669,6 +1632,14 @@ export default class FeynmanPlugin extends Plugin {
     });
 
     this.addSettingTab(new FeynmanSettingTab(this.app, this));
+
+    // Invalidate getAllConcepts() cache when vault files or their frontmatter change
+    const invalidate = () => { this._conceptsCache = null; };
+    this.registerEvent(this.app.vault.on("create", invalidate));
+    this.registerEvent(this.app.vault.on("delete", invalidate));
+    this.registerEvent(this.app.vault.on("rename", invalidate));
+    this.registerEvent(this.app.metadataCache.on("changed", invalidate));
+
     this.app.workspace.onLayoutReady(() => this.notifyDueReviews());
   }
 
@@ -1712,8 +1683,9 @@ export default class FeynmanPlugin extends Plugin {
   // ─── Data ────────────────────────────────────────────────────────────────
 
   getAllConcepts(): ConceptMeta[] {
+    if (this._conceptsCache) return this._conceptsCache;
     const folder = this.settings.notesFolder;
-    return this.app.vault.getMarkdownFiles()
+    this._conceptsCache = this.app.vault.getMarkdownFiles()
       .filter(f => f.path.startsWith(folder + "/"))
       .sort((a, b) => b.stat.mtime - a.stat.mtime)
       .flatMap(file => {
@@ -1721,6 +1693,7 @@ export default class FeynmanPlugin extends Plugin {
         if (!fm) return [];
         return [{ concept: fm.概念 || file.basename, date: fm.日期 || "", mastery: fm.掌握程度 || "初识", subject: fm.学科 || "", file }];
       });
+    return this._conceptsCache;
   }
 
   getRecentConcepts(n: number): ConceptMeta[] {

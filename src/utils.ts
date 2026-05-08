@@ -1,3 +1,22 @@
+// ─── AI response types ───────────────────────────────────────────────────────
+
+export interface ReviewDimension {
+  label: string;
+  score: "✓" | "△" | "✗";
+  note: string;
+}
+
+export interface ReviewVerdict {
+  passed: boolean;
+  dimensions: ReviewDimension[];
+  feedback: string;
+}
+
+export interface ExtractedConcept {
+  name: string;
+  reason: string;
+}
+
 // ─── Domain constants ────────────────────────────────────────────────────────
 
 export const REVIEW_INTERVALS = [1, 7, 30];
@@ -30,6 +49,75 @@ export function parseApiError(status: number, body: any): string {
   if (/model/.test(msg))                              return `模型不存在或无权限：${msg}`;
   if (/quota|balance|insufficient|credit/.test(msg)) return `余额不足：${msg}`;
   return msg || `请求失败（HTTP ${status}）`;
+}
+
+// ─── AI response parsers ──────────────────────────────────────────────────────
+
+/**
+ * Parse a raw AI text response into a structured ReviewVerdict.
+ * Tries JSON first (handles markdown fences); falls back to regex.
+ */
+export function parseReviewVerdict(text: string): ReviewVerdict {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const raw = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(raw?.dimensions) && raw.dimensions.length > 0) {
+        return {
+          passed: !!raw.passed,
+          dimensions: raw.dimensions.map((d: any) => ({
+            label: String(d.label ?? ""),
+            score: (["✓", "△", "✗"].includes(d.score) ? d.score : "✗") as "✓" | "△" | "✗",
+            note: String(d.note ?? ""),
+          })),
+          feedback: String(raw.feedback ?? ""),
+        };
+      }
+    } catch { /* fall through */ }
+  }
+  // Fallback: regex parsing
+  console.warn("[feynman] parseReviewVerdict: no valid JSON, falling back to regex");
+  const passed = text.includes("判定：通过");
+  const dimensions: ReviewDimension[] = [];
+  for (const label of ["语言简洁", "核心机制", "举例说明"] as const) {
+    const m = text.match(new RegExp(`${label}：([✓△✗])(.*)`, "m"));
+    if (m) dimensions.push({ label, score: m[1] as "✓" | "△" | "✗", note: m[2].trim() });
+  }
+  const feedback = text.match(/评价：([\s\S]*)/)?.[1]?.trim() ?? "";
+  return { passed, dimensions, feedback };
+}
+
+/**
+ * Parse a raw AI text response into an array of ExtractedConcepts.
+ * Tries JSON array first; falls back to line-by-line text parsing.
+ */
+export function parseExtractedConcepts(text: string): ExtractedConcept[] {
+  const arrMatch = text.match(/\[[\s\S]*\]/);
+  if (arrMatch) {
+    try {
+      const raw = JSON.parse(arrMatch[0]);
+      if (Array.isArray(raw) && raw.length > 0) {
+        const concepts = raw
+          .filter((c: any) => c?.name)
+          .map((c: any) => ({ name: String(c.name).trim(), reason: String(c.reason ?? "").trim() }))
+          .filter(c => c.name.length > 0)
+          .slice(0, 8);
+        if (concepts.length > 0) return concepts;
+      }
+    } catch { /* fall through */ }
+  }
+  console.warn("[feynman] parseExtractedConcepts: no valid JSON array, falling back to text parsing");
+  return text
+    .split("\n")
+    .filter(l => l.trim())
+    .map(l => {
+      const m = l.match(/「(.+?)」[—\-–]\s*(.*)/);
+      return m
+        ? { name: m[1].trim(), reason: m[2].trim() }
+        : { name: l.replace(/「|」/g, "").trim(), reason: "" };
+    })
+    .filter(c => c.name.length > 0)
+    .slice(0, 8);
 }
 
 /**
