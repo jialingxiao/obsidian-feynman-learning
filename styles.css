@@ -396,3 +396,72 @@
 .feynman-onboarding-steps { text-align: left; margin: 0 auto 20px; max-width: 340px; color: var(--text-normal); font-size: 0.88rem; line-height: 1.8; padding-left: 20px; }
 .feynman-onboarding-hint { font-size: 0.78rem; color: var(--text-faint); margin-top: 16px; }
 
+/* ── Mobile & touch adaptations ─────────────────────────────────────────────── */
+
+/*
+ * Touch devices: every interactive target should meet the 44 px minimum.
+ * Using pointer:coarse targets phones/tablets regardless of viewport width,
+ * so a narrow desktop sidebar does NOT get enlarged buttons unnecessarily.
+ */
+@media (pointer: coarse) {
+  .feynman-btn {
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+  /* Tab-style controls need at least 36 px (they're grouped, so slightly less) */
+  .feynman-sort-tab,
+  .feynman-filter-tab {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/*
+ * Narrow screens (≤ 480 px): phones in portrait, or a narrow Obsidian sidebar.
+ * Reduces padding, fixes iOS auto-zoom, and stacks multi-column rows.
+ */
+@media (max-width: 480px) {
+  /* Reclaim horizontal space */
+  .feynman-view { padding: 10px; }
+  .feynman-card { padding: 14px; }
+
+  /*
+   * iOS Safari auto-zooms into any input whose font-size < 16 px.
+   * Force 1 rem (= 16 px) on all text fields to prevent the zoom.
+   */
+  .feynman-input,
+  .feynman-textarea { font-size: 1rem; }
+
+  /* Dashboard: tighter stat cells */
+  .feynman-stat-cell { padding: 8px 6px; }
+  .feynman-stat-value { font-size: 1.2rem; }
+
+  /* Review list items: let button row claim its own full line when it wraps */
+  .feynman-review-btns {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Queue items: same – buttons drop below name on wrap */
+  .feynman-queue-btns {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-top: 2px;
+  }
+
+  /* Concept browser: use more vertical space on mobile full-panel */
+  .feynman-browser-list { max-height: 65vh; }
+
+  /* Batch header: allow the label + bar + exit button to wrap cleanly */
+  .feynman-batch-header { flex-wrap: wrap; }
+
+  /* Onboarding: remove fixed max-width so steps list fills the narrow card */
+  .feynman-onboarding { padding: 20px 16px 16px; }
+  .feynman-onboarding-steps { max-width: 100%; }
+
+  /* Review controls: let sort tabs wrap below the section title */
+  .feynman-review-controls { flex-wrap: wrap; margin-left: 0; width: 100%; }
+}
+

@@ -241,9 +241,14 @@ class FeynmanView extends ItemView {
     const btnRow = this.btnRow(card);
     this.btn(btnRow, "⚙️ 打开设置", "primary", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (this.app as any).setting?.open();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (this.app as any).setting?.openTabById("feynman-learning");
+      const appSetting = (this.app as any).setting;
+      if (appSetting?.open) {
+        appSetting.open();
+        appSetting.openTabById?.("feynman-learning");
+      } else {
+        // Mobile Obsidian: private API unavailable — guide the user manually
+        new Notice("请前往 设置 → 社区插件 → 费曼学习法 完成配置");
+      }
     });
 
     card.createEl("p", { cls: "feynman-onboarding-hint", text: "配置完成后，刷新此面板（点击左侧 🧠 图标）即可开始学习。" });
