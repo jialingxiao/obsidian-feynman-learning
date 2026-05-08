@@ -2,6 +2,20 @@
 
 Learn anything deeply using the **Feynman Technique**: explain it simply, find the gaps, and fill them. This plugin guides you through the full four-step cycle inside Obsidian, with AI assistance powered by any OpenAI-compatible API (DeepSeek, GPT-4o, Claude, local models via Ollama, etc.).
 
+## Screenshots
+
+**Dashboard** — stats, activity heatmap, mastery distribution, and due review queue with sort & batch controls:
+
+![Dashboard](docs/01-dashboard.png)
+
+**AI evaluation** — 3-dimension scoring (语言简洁 / 核心机制 / 举例说明) with pass/fail, explanatory feedback, and one-click weak-point drill:
+
+![Review result](docs/03-review-result.png)
+
+**Concept browser** — search and filter all your Feynman notes by mastery level:
+
+![Concept browser](docs/05-concept-browser.png)
+
 ## Features
 
 ### Learning workflow
