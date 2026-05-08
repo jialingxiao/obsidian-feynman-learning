@@ -29,7 +29,7 @@ export function sanitizeFilename(name: string): string {
 }
 
 export function yamlStr(value: string): string {
-  if (/[:#\[\]{}&*!|>'"@`]/.test(value) || value.startsWith(" ") || value.endsWith(" ")) {
+  if (/[:#[\]{}&*!|>'"@`]/.test(value) || value.startsWith(" ") || value.endsWith(" ")) {
     return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   }
   return value;
@@ -39,8 +39,9 @@ export function truncate(text: string, max = 1900): string {
   return text.length > max ? text.slice(0, max) + "…（已截断）" : text;
 }
 
-export function parseApiError(status: number, body: any): string {
-  const msg: string = body?.error?.message ?? body?.message ?? "";
+export function parseApiError(status: number, body: Record<string, unknown>): string {
+  const errObj = body?.error as Record<string, unknown> | undefined;
+  const msg: string = String(errObj?.message ?? body?.message ?? "");
   if (status === 401) return "API Key 无效或已过期，请检查设置中的 Key";
   if (status === 403) return "无权限访问该模型，请检查 Key 或模型名称";
   if (status === 404) return "接口地址或模型不存在，请检查 API Base URL 和模型名称";
@@ -65,9 +66,9 @@ export function parseReviewVerdict(text: string): ReviewVerdict {
       if (Array.isArray(raw?.dimensions) && raw.dimensions.length > 0) {
         return {
           passed: !!raw.passed,
-          dimensions: raw.dimensions.map((d: any) => ({
+          dimensions: (raw.dimensions as { label?: unknown; score?: unknown; note?: unknown }[]).map(d => ({
             label: String(d.label ?? ""),
-            score: (["✓", "△", "✗"].includes(d.score) ? d.score : "✗") as "✓" | "△" | "✗",
+            score: (["✓", "△", "✗"].includes(String(d.score)) ? String(d.score) : "✗") as "✓" | "△" | "✗",
             note: String(d.note ?? ""),
           })),
           feedback: String(raw.feedback ?? ""),
@@ -97,9 +98,9 @@ export function parseExtractedConcepts(text: string): ExtractedConcept[] {
     try {
       const raw = JSON.parse(arrMatch[0]);
       if (Array.isArray(raw) && raw.length > 0) {
-        const concepts = raw
-          .filter((c: any) => c?.name)
-          .map((c: any) => ({ name: String(c.name).trim(), reason: String(c.reason ?? "").trim() }))
+        const concepts = (raw as { name?: unknown; reason?: unknown }[])
+          .filter(c => c?.name)
+          .map(c => ({ name: String(c.name).trim(), reason: String(c.reason ?? "").trim() }))
           .filter(c => c.name.length > 0)
           .slice(0, 8);
         if (concepts.length > 0) return concepts;

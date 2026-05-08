@@ -1,3 +1,6 @@
+/* Utility: toggled via JS instead of element.style.display */
+.feynman-hidden { display: none; }
+
 .feynman-view {
   padding: 16px;
   overflow-y: auto;

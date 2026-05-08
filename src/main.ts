@@ -9,6 +9,7 @@ import {
   TFile,
   WorkspaceLeaf,
   moment,
+  requestUrl,
 } from "obsidian";
 import {
   MASTERY_LEVELS,
@@ -114,8 +115,8 @@ class FeynmanView extends ItemView {
   getDisplayText() { return "费曼学习法"; }
   getIcon() { return "brain"; }
 
-  async onOpen() { this.render(); }
-  async onClose() {}
+  onOpen() { this.render(); }
+  onClose() {}
 
   // ─── Core render ──────────────────────────────────────────────────────────
 
@@ -169,7 +170,7 @@ class FeynmanView extends ItemView {
   }
 
   private inp(p: HTMLElement, placeholder: string, value = ""): HTMLInputElement {
-    const el = p.createEl("input", { cls: "feynman-input", attr: { type: "text", placeholder } }) as HTMLInputElement;
+    const el = p.createEl("input", { cls: "feynman-input", attr: { type: "text", placeholder } });
     el.value = value;
     return el;
   }
@@ -196,9 +197,9 @@ class FeynmanView extends ItemView {
     try {
       await fn();
       succeeded = true;
-    } catch (e: any) {
+    } catch (e) {
       console.error("费曼插件 AI 请求失败", e);
-      if (!silent) new Notice("AI 请求失败：" + e.message);
+      if (!silent) new Notice("AI 请求失败：" + (e instanceof Error ? e.message : String(e)));
     } finally {
       if (!keepDisabledOnSuccess || !succeeded) {
         btn.disabled = false;
@@ -207,9 +208,9 @@ class FeynmanView extends ItemView {
     }
   }
 
-  private btn(p: HTMLElement, text: string, cls: string, onClick: () => void): HTMLButtonElement {
+  private btn(p: HTMLElement, text: string, cls: string, onClick: () => void | Promise<void>): HTMLButtonElement {
     const b = p.createEl("button", { cls: `feynman-btn feynman-btn-${cls}`, text });
-    b.addEventListener("click", onClick);
+    b.addEventListener("click", () => { void onClick(); });
     return b;
   }
 
@@ -286,8 +287,8 @@ class FeynmanView extends ItemView {
 
     const btnRow = this.btnRow(card);
     this.btn(btnRow, "⚙️ 打开设置", "primary", () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const appSetting = (this.app as any).setting;
+      // Access the internal settings manager (undocumented private API, may not exist on mobile)
+      const appSetting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
       if (appSetting?.open) {
         appSetting.open();
         appSetting.openTabById?.("feynman-learning");
@@ -346,8 +347,8 @@ class FeynmanView extends ItemView {
     }
 
     const reportRow = card.createDiv("feynman-btn-row");
-    const reportBtn = this.btn(reportRow, "📊 生成本周报告", "secondary", () => {});
-    reportBtn.onclick = () => this.withAiBtn(reportBtn, "生成中…", () => this.generateWeeklyReport());
+    const reportBtn = this.btn(reportRow, "📊 生成本周报告", "secondary",
+      () => this.withAiBtn(reportBtn, "生成中…", () => this.generateWeeklyReport()));
   }
 
   private renderHeatmap(parent: HTMLElement) {
@@ -358,7 +359,7 @@ class FeynmanView extends ItemView {
     for (let i = 13; i >= 0; i--) {
       const d = moment().subtract(i, "days").format("YYYY-MM-DD");
       const active = dates.includes(d);
-      const cell = grid.createDiv({
+      grid.createDiv({
         cls: `feynman-heatmap-cell ${active ? "active" : ""}`,
         attr: { title: d + (active ? " ✓" : "") },
       });
@@ -563,8 +564,7 @@ class FeynmanView extends ItemView {
 
     const expTA = this.ta(session, "用最简单的语言解释……");
 
-    const resultEl = session.createDiv("feynman-review-result");
-    resultEl.style.display = "none";
+    const resultEl = session.createDiv("feynman-review-result feynman-hidden");
 
     let lastDimensions: { label: string; score: string; note: string }[] = [];
     let lastEvalText = "";
@@ -576,7 +576,7 @@ class FeynmanView extends ItemView {
     const judgeBtn = this.btn(row, "AI 评判 →", "primary", () => {
       const exp = expTA.value.trim();
       if (!exp) { new Notice("请先写出你的解释"); return; }
-      resultEl.style.display = "none";
+      resultEl.addClass("feynman-hidden");
       void this.withAiBtn(judgeBtn, "AI 评判中…", async () => {
         const gapsContext = previousGaps ? `\n\n上次学习时记录的知识漏洞：\n${previousGaps}` : "";
         const verdict = await this.plugin.callAI([
@@ -594,7 +594,7 @@ class FeynmanView extends ItemView {
         const SCORE_CLS: Record<string, string> = { "✓": "dim-pass", "△": "dim-partial", "✗": "dim-fail" };
         const { passed, dimensions, feedback: evalText } = parseReviewVerdict(verdict);
 
-        resultEl.style.display = "block";
+        resultEl.removeClass("feynman-hidden");
         resultEl.empty();
 
         resultEl.createDiv({
@@ -662,7 +662,7 @@ class FeynmanView extends ItemView {
           });
           this.btn(actionRow, "再解释一次", "secondary", () => {
             expTA.value = "";
-            resultEl.style.display = "none";
+            resultEl.addClass("feynman-hidden");
             judgeBtn.disabled = false;
             judgeBtn.textContent = "AI 评判 →";
             expTA.focus();
@@ -759,11 +759,10 @@ class FeynmanView extends ItemView {
     const extractToggle = card.createDiv("feynman-extract-toggle");
     extractToggle.createSpan({ cls: "feynman-extract-toggle-label", text: "📄 从原文提取概念" });
     let extractOpen = false;
-    const extractBody = card.createDiv("feynman-extract-body");
-    extractBody.style.display = "none";
+    const extractBody = card.createDiv("feynman-extract-body feynman-hidden");
     extractToggle.addEventListener("click", () => {
       extractOpen = !extractOpen;
-      extractBody.style.display = extractOpen ? "block" : "none";
+      extractBody.toggleClass("feynman-hidden", !extractOpen);
       extractToggle.toggleClass("open", extractOpen);
     });
 
@@ -825,7 +824,7 @@ class FeynmanView extends ItemView {
     const searchInp = card.createEl("input", {
       cls: "feynman-input feynman-search-input",
       attr: { type: "text", placeholder: "搜索概念名称…" },
-    }) as HTMLInputElement;
+    });
     searchInp.value = this.browseSearch;
 
     // Filter tabs
@@ -922,7 +921,7 @@ class FeynmanView extends ItemView {
       const reply = await this.plugin.callAI(this.state.aiHistory);
       this.state.aiHistory.push({ role: "assistant", content: reply });
       this.renderAIChat(parent);
-    } catch (e: any) { new Notice("AI 请求失败：" + e.message); }
+    } catch (e) { new Notice("AI 请求失败：" + (e instanceof Error ? e.message : String(e))); }
   }
 
   private renderAIChat(parent: HTMLElement) {
@@ -1058,8 +1057,8 @@ class FeynmanView extends ItemView {
         this.state.step = 4;
         this.render();
       });
-    } catch (e: any) {
-      verifyCard.createDiv({ cls: "feynman-hint", text: "AI 验证失败：" + e.message });
+    } catch (e) {
+      verifyCard.createDiv({ cls: "feynman-hint", text: "AI 验证失败：" + (e instanceof Error ? e.message : String(e)) });
       triggerBtn.disabled = false;
       triggerBtn.textContent = "完成 →";
     }
@@ -1164,8 +1163,8 @@ class FeynmanView extends ItemView {
       this.state.quizFeedback = "";
       this.state.step = 5;
       this.render();
-    } catch (e: any) {
-      new Notice("AI 请求失败：" + e.message);
+    } catch (e) {
+      new Notice("AI 请求失败：" + (e instanceof Error ? e.message : String(e)));
       if (btn) { btn.disabled = false; btn.textContent = "🧪 AI 测验"; }
     }
   }
@@ -1285,7 +1284,7 @@ ${quizSection}
     // Notion sync
     if (this.plugin.settings.notionToken && this.plugin.settings.notionDatabaseId) {
       try { await this.syncToNotion(); new Notice(`「${this.state.concept}」已保存并同步到 Notion ✓`); }
-      catch (e: any) { new Notice(`笔记已保存，Notion 同步失败：${e.message}`); }
+      catch (e) { new Notice(`笔记已保存，Notion 同步失败：${e instanceof Error ? e.message : String(e)}`); }
     } else {
       new Notice(`「${this.state.concept}」已保存，明天提醒复习 ✓`);
     }
@@ -1296,7 +1295,7 @@ ${quizSection}
 
     // Fetch AI recommendations in background
     if (this.plugin.settings.apiKey) {
-      this.fetchRecommendations(parent);
+      void this.fetchRecommendations(parent);
     }
   }
 
@@ -1348,7 +1347,8 @@ ${quizSection}
     properties["第三步_知识漏洞"] = { rich_text: [{ text: { content: truncate(this.state.gaps || "（未填写）") } }] };
     properties["第四步_类比简化"] = { rich_text: [{ text: { content: truncate((this.state.finalExplanation + "\n\n" + (this.state.analogy || "")).trim()) } }] };
 
-    const resp = await fetch("https://api.notion.com/v1/pages", {
+    const resp = await requestUrl({
+      url: "https://api.notion.com/v1/pages",
       method: "POST",
       headers: {
         "Authorization": "Bearer " + notionToken,
@@ -1356,10 +1356,11 @@ ${quizSection}
         "Notion-Version": "2022-06-28",
       },
       body: JSON.stringify({ parent: { database_id: notionDatabaseId }, properties }),
+      throw: false,
     });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.message || `Notion 返回 ${resp.status}：请检查数据库字段名是否与插件设置一致`);
+    if (resp.status >= 400) {
+      const err = (resp.json ?? {}) as Record<string, unknown>;
+      throw new Error(String(err.message || `Notion 返回 ${resp.status}：请检查数据库字段名是否与插件设置一致`));
     }
   }
 
@@ -1460,8 +1461,8 @@ ${quizSection}
           };
         }, { keepDisabledOnSuccess: true });
       });
-    } catch (e: any) {
-      loadingEl.textContent = "AI 请求失败：" + e.message;
+    } catch (e) {
+      loadingEl.textContent = "AI 请求失败：" + (e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -1596,9 +1597,9 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
         new Notice("关联链接已添加到笔记 ✓");
       });
 
-    } catch (e: any) {
+    } catch (e) {
       card.empty();
-      card.createDiv({ cls: "feynman-hint", text: "AI 请求失败：" + e.message });
+      card.createDiv({ cls: "feynman-hint", text: "AI 请求失败：" + (e instanceof Error ? e.message : String(e)) });
     }
   }
 
@@ -1619,38 +1620,38 @@ class FeynmanSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "费曼学习法 设置" });
+    new Setting(containerEl).setName("费曼学习法 设置").setHeading();
 
-    containerEl.createEl("h3", { text: "AI 设置" });
-    new Setting(containerEl).setName("API Key").setDesc("DeepSeek / OpenAI / 其他兼容服务的 API Key")
+    new Setting(containerEl).setName("AI 设置").setHeading();
+    new Setting(containerEl).setName("API key").setDesc("DeepSeek / OpenAI / 其他兼容服务的 API key")
       .addText(t => t.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey)
         .then(t => { t.inputEl.type = "password"; })
-        .onChange(async v => { this.plugin.settings.apiKey = v; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("API Base URL").setDesc("兼容 OpenAI 格式的接口地址")
+        .onChange(v => { this.plugin.settings.apiKey = v; void this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("API base URL").setDesc("兼容 OpenAI 格式的接口地址")
       .addText(t => t.setPlaceholder("https://api.deepseek.com/v1").setValue(this.plugin.settings.apiBase)
-        .onChange(async v => { this.plugin.settings.apiBase = v.trim(); await this.plugin.saveSettings(); }));
+        .onChange(v => { this.plugin.settings.apiBase = v.trim(); void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("模型名称").setDesc("例如 deepseek-chat、gpt-4o、claude-3-5-sonnet-20241022")
       .addText(t => t.setPlaceholder("deepseek-chat").setValue(this.plugin.settings.model)
-        .onChange(async v => { this.plugin.settings.model = v.trim(); await this.plugin.saveSettings(); }));
+        .onChange(v => { this.plugin.settings.model = v.trim(); void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("Temperature").setDesc("生成随机性，0 最保守，1 最发散（默认 0.8）")
       .addSlider(s => s.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip()
-        .onChange(async v => { this.plugin.settings.temperature = v; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("测试连接").setDesc("用当前设置发送一次测试请求，确认 Key、地址、模型均正确")
+        .onChange(v => { this.plugin.settings.temperature = v; void this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName("测试连接").setDesc("用当前设置发送一次测试请求，确认 key、地址、模型均正确")
       .addButton(b => b.setButtonText("测试连接").onClick(async () => {
         const { apiKey, model } = this.plugin.settings;
-        if (!apiKey) { new Notice("请先填写 API Key"); return; }
+        if (!apiKey) { new Notice("请先填写 API key"); return; }
         b.setButtonText("测试中…").setDisabled(true);
         try {
-          const data = await this.plugin.requestAI([{ role: "user", content: "Hi" }], 1);
-          new Notice(`✓ 连接成功（模型：${data?.model ?? model}）`);
-        } catch (e: any) {
-          new Notice(`✗ ${e.message}`);
+          const data = await this.plugin.requestAI([{ role: "user", content: "Hi" }], 1) as Record<string, unknown>;
+          new Notice(`✓ 连接成功（模型：${String(data?.model ?? model)}）`);
+        } catch (e) {
+          new Notice(`✗ ${e instanceof Error ? e.message : String(e)}`);
         } finally {
           b.setButtonText("测试连接").setDisabled(false);
         }
       }));
 
-    containerEl.createEl("h3", { text: "复习设置" });
+    new Setting(containerEl).setName("复习设置").setHeading();
     containerEl.createEl("p", { cls: "feynman-settings-desc", text: "三个间隔（天）：保存后多久首次复习、首次通过后多久再复习、再次通过后多久最终复习。失败时固定 1 天后重试。" });
     const ivs = this.plugin.settings.reviewIntervals;
     const ivLabels = ["保存 → 首次复习（天）", "首次通过 → 二次复习（天）", "二次通过 → 三次复习（天）"];
@@ -1658,19 +1659,22 @@ class FeynmanSettingTab extends PluginSettingTab {
       new Setting(containerEl).setName(ivLabels[i])
         .addText(t => t
           .setValue(String(ivs[i] ?? [1, 7, 30][i]))
-          .onChange(async v => {
+          .onChange(v => {
             const n = parseInt(v);
             if (!Number.isNaN(n) && n >= 1) {
               this.plugin.settings.reviewIntervals[i] = n;
-              await this.plugin.saveSettings();
+              void this.plugin.saveSettings();
             }
           }));
     }
 
-    containerEl.createEl("h3", { text: "笔记设置" });
+    new Setting(containerEl).setName("笔记设置").setHeading();
     new Setting(containerEl).setName("笔记保存目录").setDesc("相对于 vault 根目录的路径")
       .addText(t => t.setPlaceholder("01.读书笔记/费曼笔记").setValue(this.plugin.settings.notesFolder)
-        .onChange(async v => { this.plugin.settings.notesFolder = v; await this.plugin.saveSettings(); this.display(); }));
+        .onChange(v => {
+          this.plugin.settings.notesFolder = v;
+          void this.plugin.saveSettings().then(() => { this.display(); });
+        }));
 
     // Folder status + one-click create
     const folderPath = this.plugin.settings.notesFolder;
@@ -1684,23 +1688,23 @@ class FeynmanSettingTab extends PluginSettingTab {
           await this.app.vault.createFolder(folderPath);
           new Notice(`文件夹「${folderPath}」已创建 ✓`);
           this.display();
-        } catch (e: any) { new Notice(`创建失败：${e.message}`); }
+        } catch (e) { new Notice(`创建失败：${e instanceof Error ? e.message : String(e)}`); }
       }));
     }
 
     new Setting(containerEl).setName("概念索引文件").setDesc("费曼学习索引文件的路径（可选）")
       .addText(t => t.setPlaceholder("01.读书笔记/费曼学习索引.md").setValue(this.plugin.settings.indexFile)
-        .onChange(async v => { this.plugin.settings.indexFile = v; await this.plugin.saveSettings(); }));
+        .onChange(v => { this.plugin.settings.indexFile = v; void this.plugin.saveSettings(); }));
 
-    containerEl.createEl("h3", { text: "Notion 同步" });
+    new Setting(containerEl).setName("Notion 同步").setHeading();
     containerEl.createEl("p", { cls: "feynman-settings-desc", text: "填写后保存笔记时自动同步到 Notion，留空则不同步。" });
-    new Setting(containerEl).setName("Notion Integration Token").setDesc("在 notion.so/my-integrations 创建集成后获取")
+    new Setting(containerEl).setName("Notion integration token").setDesc("在 notion.so/my-integrations 创建集成后获取")
       .addText(t => t.setPlaceholder("secret_...").setValue(this.plugin.settings.notionToken)
         .then(t => { t.inputEl.type = "password"; })
-        .onChange(async v => { this.plugin.settings.notionToken = v; await this.plugin.saveSettings(); }));
+        .onChange(v => { this.plugin.settings.notionToken = v; void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("Notion 数据库 ID").setDesc("填写后可同步到你的 Notion 数据库")
       .addText(t => t.setPlaceholder("数据库 ID").setValue(this.plugin.settings.notionDatabaseId)
-        .onChange(async v => { this.plugin.settings.notionDatabaseId = v; await this.plugin.saveSettings(); }));
+        .onChange(v => { this.plugin.settings.notionDatabaseId = v; void this.plugin.saveSettings(); }));
 
     containerEl.createEl("p", { cls: "feynman-settings-desc", text: "Notion 字段名映射 — 若你的数据库列名与默认值不同，请在此修改（否则同步会 400 报错）。" });
     const notionProps: Array<[keyof FeynmanSettings, string, string]> = [
@@ -1712,15 +1716,15 @@ class FeynmanSettingTab extends PluginSettingTab {
     for (const [key, label, placeholder] of notionProps) {
       new Setting(containerEl).setName(label)
         .addText(t => t.setPlaceholder(placeholder).setValue(String(this.plugin.settings[key] ?? placeholder))
-          .onChange(async v => {
-            (this.plugin.settings as any)[key] = v.trim() || placeholder;
-            await this.plugin.saveSettings();
+          .onChange(v => {
+            Object.assign(this.plugin.settings, { [key]: v.trim() || placeholder });
+            void this.plugin.saveSettings();
           }));
     }
 
     // ── Settings export / import ──────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "数据管理" });
-    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "导出设置到剪贴板，或从剪贴板导入（可用于换设备、备份、排障）。API Key 和 Notion Token 包含在导出数据中，请妥善保管。" });
+    new Setting(containerEl).setName("数据管理").setHeading();
+    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "导出设置到剪贴板，或从剪贴板导入（可用于换设备、备份、排障）。API key 和 Notion token 包含在导出数据中，请妥善保管。" });
 
     new Setting(containerEl).setName("导出设置").setDesc("将当前所有设置复制为 JSON 到剪贴板")
       .addButton(b => b.setButtonText("📋 导出到剪贴板").onClick(async () => {
@@ -1733,18 +1737,19 @@ class FeynmanSettingTab extends PluginSettingTab {
       .addButton(b => b.setButtonText("📥 从剪贴板导入").onClick(async () => {
         try {
           const text = await navigator.clipboard.readText();
-          const parsed = JSON.parse(text);
-          if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("格式不正确");
+          const parsed = JSON.parse(text) as unknown;
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("格式不正确");
+          const parsedObj = parsed as Record<string, unknown>;
           // Merge: only overwrite keys that exist in DEFAULT_SETTINGS to avoid injecting unknown fields
           const safe = Object.fromEntries(
-            Object.keys(DEFAULT_SETTINGS).filter(k => k in parsed).map(k => [k, parsed[k]])
+            Object.keys(DEFAULT_SETTINGS).filter(k => k in parsedObj).map(k => [k, parsedObj[k]])
           );
           Object.assign(this.plugin.settings, safe);
           await this.plugin.saveSettings();
           this.display();
           new Notice(`已导入 ${Object.keys(safe).length} 个设置项 ✓`);
-        } catch (e: any) {
-          new Notice("导入失败：" + (e.message ?? "剪贴板内容不是有效的设置 JSON"));
+        } catch (e) {
+          new Notice("导入失败：" + (e instanceof Error ? e.message : "剪贴板内容不是有效的设置 JSON"));
         }
       }));
   }
@@ -1815,8 +1820,6 @@ export default class FeynmanPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => this.notifyDueReviews());
   }
 
-  async onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE); }
-
   async activateView() {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
     const leaf = this.app.workspace.getRightLeaf(false);
@@ -1825,32 +1828,25 @@ export default class FeynmanPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  async requestAI(messages: { role: string; content: string }[], maxTokens = 800) {
+  async requestAI(messages: { role: string; content: string }[], maxTokens = 800): Promise<Record<string, unknown>> {
     const { apiKey, apiBase, model, temperature } = this.settings;
     const base = apiBase.replace(/\/$/, "");
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 40_000);
-    try {
-      const resp = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-        signal: controller.signal,
-      });
-      const body = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(parseApiError(resp.status, body));
-      return body;
-    } catch (e: any) {
-      if (e.name === "AbortError") throw new Error("AI 请求超时（40 秒），请检查网络或稍后重试");
-      throw e;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const resp = await requestUrl({
+      url: `${base}/chat/completions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+      throw: false,
+    });
+    const body = (resp.json ?? {}) as Record<string, unknown>;
+    if (resp.status >= 400) throw new Error(parseApiError(resp.status, body));
+    return body;
   }
 
   async callAI(messages: { role: string; content: string }[], maxTokens = 800): Promise<string> {
     const data = await this.requestAI(messages, maxTokens);
-    return data.choices?.[0]?.message?.content as string;
+    const choices = data.choices as { message?: { content?: string } }[] | undefined;
+    return choices?.[0]?.message?.content ?? "";
   }
   // ─── Data ────────────────────────────────────────────────────────────────
 
