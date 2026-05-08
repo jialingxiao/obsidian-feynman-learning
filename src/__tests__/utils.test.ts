@@ -115,6 +115,10 @@ describe("truncate", () => {
 // ─── parseReviewVerdict ───────────────────────────────────────────────────────
 
 describe("parseReviewVerdict", () => {
+  let warnSpy: jest.SpyInstance;
+  beforeEach(() => { warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {}); });
+  afterEach(() => { warnSpy.mockRestore(); });
+
   const validJson = JSON.stringify({
     passed: true,
     dimensions: [
@@ -170,6 +174,10 @@ describe("parseReviewVerdict", () => {
 // ─── parseExtractedConcepts ───────────────────────────────────────────────────
 
 describe("parseExtractedConcepts", () => {
+  let warnSpy: jest.SpyInstance;
+  beforeEach(() => { warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {}); });
+  afterEach(() => { warnSpy.mockRestore(); });
+
   const validArr = JSON.stringify([
     { name: "复利", reason: "核心财务概念" },
     { name: "边际效用", reason: "经济学基础" },
