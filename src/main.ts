@@ -165,6 +165,32 @@ class FeynmanView extends ItemView {
 
   private btnRow(p: HTMLElement) { return p.createDiv("feynman-btn-row"); }
 
+  /**
+   * Unified AI button state helper.
+   * Disables the button and shows loadingText while fn() runs.
+   * On error: logs to console + shows Notice (unless silent=true), then restores button.
+   * Always restores button text/state in finally.
+   */
+  private async withAiBtn(
+    btn: HTMLButtonElement,
+    loadingText: string,
+    fn: () => Promise<void>,
+    { silent = false }: { silent?: boolean } = {}
+  ): Promise<void> {
+    const original = btn.textContent ?? "";
+    btn.disabled = true;
+    btn.textContent = loadingText;
+    try {
+      await fn();
+    } catch (e: any) {
+      console.error("费曼插件 AI 请求失败", e);
+      if (!silent) new Notice("AI 请求失败：" + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
   private btn(p: HTMLElement, text: string, cls: string, onClick: () => void): HTMLButtonElement {
     const b = p.createEl("button", { cls: `feynman-btn feynman-btn-${cls}`, text });
     b.addEventListener("click", onClick);
@@ -231,9 +257,8 @@ class FeynmanView extends ItemView {
     }
 
     const reportRow = card.createDiv("feynman-btn-row");
-    this.btn(reportRow, "📊 生成本周报告", "secondary", async () => {
-      await this.generateWeeklyReport();
-    });
+    const reportBtn = this.btn(reportRow, "📊 生成本周报告", "secondary", () => {});
+    reportBtn.onclick = () => this.withAiBtn(reportBtn, "生成中…", () => this.generateWeeklyReport());
   }
 
   private renderHeatmap(parent: HTMLElement) {
@@ -423,7 +448,7 @@ class FeynmanView extends ItemView {
       const recSection = content.match(/## 复习记录\n([\s\S]*)/)?.[1] ?? "";
       const lastFail = recSection.match(/### .+? · ✗ 未通过\n([\s\S]*?)(?=\n###|$)/)?.[1] ?? "";
       previousWeakDims = (lastFail.match(/- .+?：✗[^\n]*/g) ?? []).map(l => l.replace(/^- /, "").trim());
-    } catch { /* optional */ }
+    } catch (e) { console.error("费曼插件：读取笔记上下文失败", e); }
 
     session.createDiv({ cls: "feynman-review-session-hint", text: `不看笔记，用自己的话重新解释「${item.concept}」，AI 会从三个维度评判你的掌握程度。` });
 
@@ -464,28 +489,39 @@ class FeynmanView extends ItemView {
           {
             role: "system",
             content: `你是一个严格但友善的学习评估老师。学生正在复习「${item.concept}」这个概念。
-从以下三个维度评判，然后给出总体判定。输出格式（严格按照，每行一条）：
-语言简洁：✓ 或 △ 或 ✗（一句话说明）
-核心机制：✓ 或 △ 或 ✗（一句话说明）
-举例说明：✓ 或 △ 或 ✗（一句话说明）
-判定：通过 或 判定：未通过
-评价：（1-2句话综合评价）`,
+从三个维度评判后，只返回如下 JSON，不要输出任何其他内容：
+{"passed":true,"dimensions":[{"label":"语言简洁","score":"✓","note":""},{"label":"核心机制","score":"✓","note":""},{"label":"举例说明","score":"✓","note":""}],"feedback":""}
+其中 score 只能是 "✓"、"△" 或 "✗"；passed 为 true 当且仅当没有任何维度是 "✗"；note 和 feedback 各一句话。`,
           },
           { role: "user", content: `学生对「${item.concept}」的重新解释：\n${exp}${gapsContext}` },
         ]);
 
-        const passed = verdict.includes("判定：通过");
-
-        // Parse dimensions
-        const SCORE_ICON: Record<string, string> = { "✓": "✓", "△": "△", "✗": "✗" };
+        // Parse JSON response, with regex fallback for unexpected formats
         const SCORE_CLS: Record<string, string> = { "✓": "dim-pass", "△": "dim-partial", "✗": "dim-fail" };
-        const dimensions: { label: string; score: string; note: string }[] = [];
-        for (const label of ["语言简洁", "核心机制", "举例说明"]) {
-          const re = new RegExp(`${label}：([✓△✗])(.*)`, "m");
-          const m = verdict.match(re);
-          if (m) dimensions.push({ label, score: m[1], note: m[2].trim() });
+        let passed = false;
+        let dimensions: { label: string; score: string; note: string }[] = [];
+        let evalText = "";
+
+        const jsonMatch = verdict.match(/\{[\s\S]*\}/);
+        const parsedJson = jsonMatch
+          ? (() => { try { return JSON.parse(jsonMatch[0]); } catch { return null; } })()
+          : null;
+        if (parsedJson?.dimensions) {
+          passed = !!parsedJson.passed;
+          dimensions = (parsedJson.dimensions as { label: string; score: string; note: string }[])
+            .map(d => ({ label: String(d.label ?? ""), score: String(d.score ?? "✗"), note: String(d.note ?? "") }));
+          evalText = String(parsedJson.feedback ?? "");
+        } else {
+          // Fallback: regex parsing for legacy / unexpected format
+          console.warn("费曼插件：AI 评分未返回 JSON，回退到正则解析", verdict);
+          passed = verdict.includes("判定：通过");
+          for (const label of ["语言简洁", "核心机制", "举例说明"]) {
+            const re = new RegExp(`${label}：([✓△✗])(.*)`, "m");
+            const m = verdict.match(re);
+            if (m) dimensions.push({ label, score: m[1], note: m[2].trim() });
+          }
+          evalText = verdict.match(/评价：([\s\S]*)/)?.[1]?.trim() ?? "";
         }
-        const evalText = verdict.match(/评价：([\s\S]*)/)?.[1]?.trim() ?? "";
 
         resultEl.style.display = "block";
         resultEl.empty();
@@ -612,6 +648,40 @@ class FeynmanView extends ItemView {
     this.btn(row, "开始学习 →", "primary", () => {
       const name = nameInp.value.trim();
       if (!name) { new Notice("请输入概念名称"); return; }
+
+      // Check for duplicate concept
+      const existing = this.plugin.getAllConcepts().find(c => c.concept === name);
+      if (existing) {
+        card.querySelector(".feynman-dup-warn")?.remove();
+        const warn = card.createDiv("feynman-dup-warn");
+        warn.createDiv({ cls: "feynman-hint", text: `已有「${name}」的学习笔记（当前掌握：${existing.mastery}）` });
+        const warnRow = this.btnRow(warn);
+        this.btn(warnRow, "打开原笔记", "secondary", () => {
+          this.app.workspace.getLeaf("tab").openFile(existing.file);
+          warn.remove();
+        });
+        const isDue = this.plugin.getDueConcepts().find(d => d.file.path === existing.file.path);
+        if (isDue) {
+          this.btn(warnRow, "去复习它 →", "primary", () => {
+            warn.remove();
+            // Scroll the dashboard back to the due-review list
+            this.render();
+            setTimeout(() => {
+              const el = this.containerEl.querySelector(".feynman-review-card");
+              el?.scrollIntoView({ behavior: "smooth" });
+            }, 100);
+          });
+        }
+        this.btn(warnRow, "仍然新建", "warn", () => {
+          warn.remove();
+          this.state.concept = name;
+          this.state.why = whyInp.value.trim();
+          this.state.step = 1;
+          this.render();
+        });
+        return;
+      }
+
       this.state.concept = name;
       this.state.why = whyInp.value.trim();
       this.state.step = 1;
@@ -632,20 +702,33 @@ class FeynmanView extends ItemView {
 
     const textTA = this.ta(extractBody, "粘贴文章、课堂笔记、书摘……");
     const extractRow = this.btnRow(extractBody);
-    const extractBtn = this.btn(extractRow, "AI 提取概念", "primary", async () => {
+    const extractBtn = this.btn(extractRow, "AI 提取概念", "primary", () => {
       const text = textTA.value.trim();
       if (!text) { new Notice("请先粘贴原文"); return; }
-      extractBtn.disabled = true; extractBtn.textContent = "提取中…";
-      try {
+      void this.withAiBtn(extractBtn, "提取中…", async () => {
         const result = await this.plugin.callAI([
-          { role: "system", content: "从给定文本中提取3-8个值得用费曼学习法深入理解的核心概念，按建议学习顺序排列。每行一个，格式：「概念名」— 一句话说明为什么值得学。不要编号。" },
+          { role: "system", content: "从给定文本中提取3-8个值得用费曼学习法深入理解的核心概念，按建议学习顺序排列。只返回 JSON 数组，不要输出任何其他内容：[{\"name\":\"概念名\",\"reason\":\"一句话说明为什么值得学\"},...]" },
           { role: "user", content: text.slice(0, 3000) },
         ], 500);
 
-        const concepts = result.split("\n").filter(l => l.trim()).map(l => {
-          const m = l.match(/「(.+?)」[—\-–]\s*(.*)/);
-          return m ? { name: m[1].trim(), reason: m[2].trim() } : { name: l.replace(/「|」/g, "").trim(), reason: "" };
-        }).filter(c => c.name).slice(0, 8);
+        // JSON parsing with fallback to text parsing
+        let concepts: { name: string; reason: string }[] = [];
+        const arrMatch = result.match(/\[[\s\S]*\]/);
+        if (arrMatch) {
+          try {
+            concepts = (JSON.parse(arrMatch[0]) as { name: string; reason: string }[])
+              .filter(c => c?.name)
+              .map(c => ({ name: String(c.name).trim(), reason: String(c.reason ?? "").trim() }))
+              .slice(0, 8);
+          } catch { /* fall through to text parsing */ }
+        }
+        if (concepts.length === 0) {
+          console.warn("费曼插件：概念提取未返回 JSON，回退到文本解析", result);
+          concepts = result.split("\n").filter(l => l.trim()).map(l => {
+            const m = l.match(/「(.+?)」[—\-–]\s*(.*)/);
+            return m ? { name: m[1].trim(), reason: m[2].trim() } : { name: l.replace(/「|」/g, "").trim(), reason: "" };
+          }).filter(c => c.name).slice(0, 8);
+        }
 
         extractBody.querySelector(".feynman-extract-results")?.remove();
         if (concepts.length === 0) { new Notice("未能提取到概念，请换一段文本"); return; }
@@ -675,11 +758,7 @@ class FeynmanView extends ItemView {
             addBtn.disabled = true;
           });
         }
-      } catch (e: any) {
-        new Notice("AI 请求失败：" + e.message);
-      } finally {
-        extractBtn.disabled = false; extractBtn.textContent = "AI 提取概念";
-      }
+      });
     });
   }
 
@@ -1176,8 +1255,8 @@ ${quizSection}
       ], 200);
       this.state.recommendations = result.split("\n").map(l => l.trim()).filter(l => l && !l.match(/^\d+\./)).slice(0, 3);
       if (parent) this.renderRecommendations(parent);
-    } catch {
-      // Recommendations are optional, ignore errors
+    } catch (e) {
+      console.error("费曼插件：获取学习推荐失败（非关键功能）", e);
     }
   }
 
@@ -1227,7 +1306,7 @@ ${quizSection}
         ? content.replace("## 复习记录", `## 复习记录${entry}`)
         : content + `\n## 复习记录${entry}\n`;
       await this.app.vault.modify(file, updated);
-    } catch { /* non-critical */ }
+    } catch (e) { console.error("费曼插件：保存失败复习记录到笔记失败", e); }
   }
 
   private async renderWeakPointDrill(
@@ -1335,7 +1414,10 @@ ${quizSection}
           { role: "system", content: "你是一个温暖的学习教练。根据用户本周的学习数据，写一段简短的学习反思（100字以内），肯定进步，给出下周一个具体的学习建议。用中文，语气轻松友好。" },
           { role: "user", content: statsText },
         ], 300);
-      } catch { /* optional */ }
+      } catch (e) {
+        console.error("费曼插件：周报 AI 反思生成失败", e);
+        aiReflection = "";
+      }
     }
 
     const conceptSection = weekData.newConcepts.length > 0
@@ -1603,14 +1685,24 @@ export default class FeynmanPlugin extends Plugin {
   async requestAI(messages: { role: string; content: string }[], maxTokens = 800) {
     const { apiKey, apiBase, model, temperature } = this.settings;
     const base = apiBase.replace(/\/$/, "");
-    const resp = await fetch(`${base}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-    });
-    const body = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(parseApiError(resp.status, body));
-    return body;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 40_000);
+    try {
+      const resp = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+        signal: controller.signal,
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(parseApiError(resp.status, body));
+      return body;
+    } catch (e: any) {
+      if (e.name === "AbortError") throw new Error("AI 请求超时（40 秒），请检查网络或稍后重试");
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async callAI(messages: { role: string; content: string }[], maxTokens = 800): Promise<string> {
