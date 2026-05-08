@@ -2,6 +2,16 @@
 
 All notable changes to **Feynman Learning** are documented here.
 
+## [1.3.0] — 2026-05-08
+
+### Added
+- **Notion field name mapping** — four core Notion property names (title, mastery, status, subject) are now configurable in Settings; default values preserve backward compatibility; error message on 400 now tells users to check field name alignment
+- **Settings export / import** — "数据管理" section in Settings lets users copy all settings to clipboard as JSON, then paste and merge on another device; import is sandboxed to known keys from DEFAULT_SETTINGS to prevent injection
+- **Batch review progress persistence** — batch state (`filePaths` + current index) is saved to disk via `savePendingBatch()`; if Obsidian closes mid-batch, a resume banner appears on the dashboard on next open; "放弃此次批量" clears the saved state
+
+### Fixed
+- Notion sync error message now reads "请检查数据库字段名是否与插件设置一致" instead of a raw HTTP status when field names mismatch
+
 ## [1.2.0] — 2026-05-08
 
 ### Added

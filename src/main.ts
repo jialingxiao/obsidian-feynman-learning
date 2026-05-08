@@ -38,6 +38,11 @@ interface FeynmanSettings {
   indexFile: string;
   notionToken: string;
   notionDatabaseId: string;
+  // Notion property names — configurable so users with different database schemas don't get 400 errors
+  notionPropTitle: string;    // Title property (concept name)
+  notionPropMastery: string;  // Select property for mastery level
+  notionPropStatus: string;   // Select property for learning status
+  notionPropSubject: string;  // Select property for subject/domain
   reviewIntervals: number[];   // [retry, phase1, phase2] in days, e.g. [1, 7, 30]
 }
 
@@ -50,6 +55,10 @@ const DEFAULT_SETTINGS: FeynmanSettings = {
   indexFile: "01.读书笔记/费曼学习索引.md",
   notionToken: "",
   notionDatabaseId: "",
+  notionPropTitle:   "概念名称",
+  notionPropMastery: "掌握程度",
+  notionPropStatus:  "状态",
+  notionPropSubject: "学科领域",
   reviewIntervals: [1, 7, 30],
 };
 
@@ -215,11 +224,48 @@ class FeynmanView extends ItemView {
       this.renderOnboarding(parent);
       return;
     }
+    this.renderPendingBatchBanner(parent);
     this.renderDashboard(parent);
     this.renderQueue(parent);
     this.renderDueReviews(parent);
     this.renderHistory(parent);
     this.renderStartCard(parent);
+  }
+
+  /** Shows a resume prompt if there is a persisted in-progress batch. */
+  private renderPendingBatchBanner(parent: HTMLElement) {
+    const pb = this.plugin.pendingBatch;
+    if (!pb || pb.filePaths.length === 0 || pb.index >= pb.filePaths.length) return;
+
+    const banner = parent.createDiv("feynman-card feynman-resume-banner");
+    banner.createDiv({
+      cls: "feynman-resume-text",
+      text: `📚 上次批量复习中断在第 ${pb.index + 1} / ${pb.filePaths.length} 个，要继续吗？`,
+    });
+    const row = this.btnRow(banner);
+    this.btn(row, "继续复习 →", "primary", () => {
+      // Rebuild DueConcept from stored file paths; skip missing/deleted files
+      const queue: DueConcept[] = pb.filePaths.flatMap(path => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return [];
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (!fm) return [];
+        return [{ file, concept: fm["概念"] || file.basename, reviewCount: fm.review_count ?? 0, reviewDate: fm.review_date ?? "", mastery: fm["掌握程度"] ?? "初识" }];
+      });
+      if (queue.length === 0) {
+        void this.plugin.clearPendingBatch();
+        this.render();
+        return;
+      }
+      this.batchQueue = queue;
+      this.batchIndex = Math.min(pb.index, queue.length - 1);
+      this.batchMode = true;
+      this.render();
+    });
+    this.btn(row, "放弃此次批量", "secondary", async () => {
+      await this.plugin.clearPendingBatch();
+      this.render();
+    });
   }
 
   private renderOnboarding(parent: HTMLElement) {
@@ -385,7 +431,9 @@ class FeynmanView extends ItemView {
     if (due.length >= 2) {
       this.btn(controls, "🚀 批量复习", "primary", () => {
         this.batchQueue = [...due];   // freeze the current sorted list
-        this.batchMode = true; this.batchIndex = 0; this.render();
+        this.batchMode = true; this.batchIndex = 0;
+        void this.plugin.savePendingBatch(due.map(d => d.file.path), 0);
+        this.render();
       });
     }
 
@@ -443,6 +491,7 @@ class FeynmanView extends ItemView {
       const card = parent.createDiv("feynman-card");
       card.createEl("h2", { text: "🎉 批量复习完成！" });
       card.createDiv({ cls: "feynman-hint", text: `共完成 ${due.length} 个概念的复习` });
+      void this.plugin.clearPendingBatch();   // all done — remove persisted progress
       this.btn(this.btnRow(card), "返回首页", "primary", () => {
         this.batchMode = false; this.batchIndex = 0; this.batchQueue = []; this.render();
       });
@@ -460,17 +509,23 @@ class FeynmanView extends ItemView {
     const barWrap = progressHeader.createDiv("feynman-progress-bar feynman-batch-bar");
     const pct = Math.round(this.batchIndex / total * 100);
     barWrap.createDiv({ cls: "feynman-progress-fill", attr: { style: `width:${pct}%` } });
-    this.btn(progressHeader, "退出", "secondary", () => {
+    this.btn(progressHeader, "退出", "secondary", async () => {
+      await this.plugin.clearPendingBatch();
       this.batchMode = false; this.batchIndex = 0; this.batchQueue = []; this.render();
     });
 
     // Skip button
     const skipRow = card.createDiv("feynman-batch-skip-row");
-    this.btn(skipRow, "跳过 →", "secondary", () => { this.batchIndex++; this.render(); });
+    this.btn(skipRow, "跳过 →", "secondary", () => {
+      this.batchIndex++;
+      void this.plugin.savePendingBatch(this.batchQueue.map(d => d.file.path), this.batchIndex);
+      this.render();
+    });
 
     // Render review session inline; onComplete advances to next item
-    void this.renderReviewSession(card, item, () => {
+    void this.renderReviewSession(card, item, async () => {
       this.batchIndex++;
+      await this.plugin.savePendingBatch(this.batchQueue.map(d => d.file.path), this.batchIndex);
       this.render();
     });
   }
@@ -1271,25 +1326,41 @@ ${quizSection}
   }
 
   private async syncToNotion() {
-    const { notionToken, notionDatabaseId } = this.plugin.settings;
+    const {
+      notionToken, notionDatabaseId,
+      notionPropTitle, notionPropMastery, notionPropStatus, notionPropSubject,
+    } = this.plugin.settings;
+
+    // Core properties — use user-configured field names so different database schemas work
+    const properties: Record<string, unknown> = {
+      [notionPropTitle]:   { title: [{ text: { content: this.state.concept } }] },
+      [notionPropMastery]: { select: { name: "初识" } },
+      [notionPropStatus]:  { select: { name: "进行中" } },
+      [notionPropSubject]: { select: { name: "其他" } },
+    };
+
+    // Optional rich-text fields — use default names; silently omit any that
+    // don't exist in the user's database (Notion returns 400 for unknown props,
+    // but we only discover this after the fact, so we add them speculatively
+    // and let the caller's try/catch surface the error with a clear message).
+    properties["第一步_概念描述"] = { rich_text: [{ text: { content: truncate(this.state.why || this.state.concept) } }] };
+    properties["第二步_简单解释"] = { rich_text: [{ text: { content: truncate(this.state.explanation) } }] };
+    properties["第三步_知识漏洞"] = { rich_text: [{ text: { content: truncate(this.state.gaps || "（未填写）") } }] };
+    properties["第四步_类比简化"] = { rich_text: [{ text: { content: truncate((this.state.finalExplanation + "\n\n" + (this.state.analogy || "")).trim()) } }] };
+
     const resp = await fetch("https://api.notion.com/v1/pages", {
       method: "POST",
-      headers: { "Authorization": "Bearer " + notionToken, "Content-Type": "application/json", "Notion-Version": "2022-06-28" },
-      body: JSON.stringify({
-        parent: { database_id: notionDatabaseId },
-        properties: {
-          "概念名称": { title: [{ text: { content: this.state.concept } }] },
-          "学科领域": { select: { name: "其他" } },
-          "掌握程度": { select: { name: "初识" } },
-          "状态": { select: { name: "进行中" } },
-          "第一步_概念描述": { rich_text: [{ text: { content: truncate(this.state.why || this.state.concept) } }] },
-          "第二步_简单解释": { rich_text: [{ text: { content: truncate(this.state.explanation) } }] },
-          "第三步_知识漏洞": { rich_text: [{ text: { content: truncate(this.state.gaps || "（未填写）") } }] },
-          "第四步_类比简化": { rich_text: [{ text: { content: truncate((this.state.finalExplanation + "\n\n" + (this.state.analogy || "")).trim()) } }] },
-        },
-      }),
+      headers: {
+        "Authorization": "Bearer " + notionToken,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+      },
+      body: JSON.stringify({ parent: { database_id: notionDatabaseId }, properties }),
     });
-    if (!resp.ok) { const err = await resp.json(); throw new Error(err.message || resp.statusText); }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.message || `Notion 返回 ${resp.status}：请检查数据库字段名是否与插件设置一致`);
+    }
   }
 
   private async saveFailedReviewToNote(
@@ -1630,6 +1701,52 @@ class FeynmanSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Notion 数据库 ID").setDesc("填写后可同步到你的 Notion 数据库")
       .addText(t => t.setPlaceholder("数据库 ID").setValue(this.plugin.settings.notionDatabaseId)
         .onChange(async v => { this.plugin.settings.notionDatabaseId = v; await this.plugin.saveSettings(); }));
+
+    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "Notion 字段名映射 — 若你的数据库列名与默认值不同，请在此修改（否则同步会 400 报错）。" });
+    const notionProps: Array<[keyof FeynmanSettings, string, string]> = [
+      ["notionPropTitle",   "标题字段名（概念名称）", "概念名称"],
+      ["notionPropMastery", "掌握程度字段名",         "掌握程度"],
+      ["notionPropStatus",  "状态字段名",             "状态"],
+      ["notionPropSubject", "学科领域字段名",         "学科领域"],
+    ];
+    for (const [key, label, placeholder] of notionProps) {
+      new Setting(containerEl).setName(label)
+        .addText(t => t.setPlaceholder(placeholder).setValue(String(this.plugin.settings[key] ?? placeholder))
+          .onChange(async v => {
+            (this.plugin.settings as any)[key] = v.trim() || placeholder;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    // ── Settings export / import ──────────────────────────────────────────────
+    containerEl.createEl("h3", { text: "数据管理" });
+    containerEl.createEl("p", { cls: "feynman-settings-desc", text: "导出设置到剪贴板，或从剪贴板导入（可用于换设备、备份、排障）。API Key 和 Notion Token 包含在导出数据中，请妥善保管。" });
+
+    new Setting(containerEl).setName("导出设置").setDesc("将当前所有设置复制为 JSON 到剪贴板")
+      .addButton(b => b.setButtonText("📋 导出到剪贴板").onClick(async () => {
+        const json = JSON.stringify(this.plugin.settings, null, 2);
+        await navigator.clipboard.writeText(json);
+        new Notice("设置已复制到剪贴板 ✓");
+      }));
+
+    new Setting(containerEl).setName("导入设置").setDesc("从剪贴板读取 JSON 并合并到当前设置（未包含的字段保持不变）")
+      .addButton(b => b.setButtonText("📥 从剪贴板导入").onClick(async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          const parsed = JSON.parse(text);
+          if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("格式不正确");
+          // Merge: only overwrite keys that exist in DEFAULT_SETTINGS to avoid injecting unknown fields
+          const safe = Object.fromEntries(
+            Object.keys(DEFAULT_SETTINGS).filter(k => k in parsed).map(k => [k, parsed[k]])
+          );
+          Object.assign(this.plugin.settings, safe);
+          await this.plugin.saveSettings();
+          this.display();
+          new Notice(`已导入 ${Object.keys(safe).length} 个设置项 ✓`);
+        } catch (e: any) {
+          new Notice("导入失败：" + (e.message ?? "剪贴板内容不是有效的设置 JSON"));
+        }
+      }));
   }
 }
 
@@ -1641,6 +1758,8 @@ export default class FeynmanPlugin extends Plugin {
   reviewHistory: ReviewRecord[] = [];
   learningQueue: string[] = [];
   pendingReviewFilePath: string | null = null;
+  /** Persisted batch progress: file paths + how far we got. Null = no in-progress batch. */
+  pendingBatch: { filePaths: string[]; index: number } | null = null;
   private _conceptsCache: ConceptMeta[] | null = null;
 
   async onload() {
@@ -1649,6 +1768,7 @@ export default class FeynmanPlugin extends Plugin {
     this.learningDates = data?.learningDates ?? [];
     this.reviewHistory = data?.reviewHistory ?? [];
     this.learningQueue = data?.learningQueue ?? [];
+    this.pendingBatch   = data?.pendingBatch   ?? null;
 
     this.registerView(VIEW_TYPE, leaf => new FeynmanView(leaf, this));
     this.addRibbonIcon("brain", "费曼学习法", () => this.activateView());
@@ -1858,6 +1978,16 @@ export default class FeynmanPlugin extends Plugin {
   async removeFromQueue(concept: string) {
     this.learningQueue = this.learningQueue.filter(c => c !== concept);
     await this.saveData({ ...(await this.loadData()), learningQueue: this.learningQueue });
+  }
+
+  async savePendingBatch(filePaths: string[], index: number) {
+    this.pendingBatch = { filePaths, index };
+    await this.saveData({ ...(await this.loadData()), pendingBatch: this.pendingBatch });
+  }
+
+  async clearPendingBatch() {
+    this.pendingBatch = null;
+    await this.saveData({ ...(await this.loadData()), pendingBatch: null });
   }
 
   async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
