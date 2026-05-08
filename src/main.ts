@@ -211,11 +211,42 @@ class FeynmanView extends ItemView {
       this.renderBatchReview(parent);
       return;
     }
+    if (!this.plugin.settings.apiKey) {
+      this.renderOnboarding(parent);
+      return;
+    }
     this.renderDashboard(parent);
     this.renderQueue(parent);
     this.renderDueReviews(parent);
     this.renderHistory(parent);
     this.renderStartCard(parent);
+  }
+
+  private renderOnboarding(parent: HTMLElement) {
+    const card = parent.createDiv("feynman-card feynman-onboarding");
+
+    card.createEl("div", { cls: "feynman-onboarding-icon", text: "🧠" });
+    card.createEl("h2", { cls: "feynman-onboarding-title", text: "欢迎使用费曼学习法！" });
+    card.createEl("p", { cls: "feynman-onboarding-desc", text: "用「教会别人」的方式深度学习任何概念，AI 帮你找漏洞、做复习。" });
+
+    card.createEl("p", { cls: "feynman-settings-desc", text: "开始之前，先完成一次性配置：" });
+    const steps = card.createEl("ol", { cls: "feynman-onboarding-steps" });
+    [
+      "打开 设置 → 社区插件 → 费曼学习法",
+      "填写 API Key（推荐 DeepSeek，性价比高；也支持 OpenAI / 本地 Ollama 等）",
+      "点击「测试连接」确认配置正确",
+      "回到这里，输入第一个你想学习的概念！",
+    ].forEach(text => steps.createEl("li", { text }));
+
+    const btnRow = this.btnRow(card);
+    this.btn(btnRow, "⚙️ 打开设置", "primary", () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.app as any).setting?.open();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.app as any).setting?.openTabById("feynman-learning");
+    });
+
+    card.createEl("p", { cls: "feynman-onboarding-hint", text: "配置完成后，刷新此面板（点击左侧 🧠 图标）即可开始学习。" });
   }
 
   private renderDashboard(parent: HTMLElement) {
@@ -1129,7 +1160,8 @@ class FeynmanView extends ItemView {
       : "";
 
     return `---
-tags: [费曼学习法]
+tags:
+  - 费曼学习法
 概念: ${yamlStr(this.state.concept)}
 日期: ${date}
 掌握程度: 初识
@@ -1562,8 +1594,25 @@ class FeynmanSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "笔记设置" });
     new Setting(containerEl).setName("笔记保存目录").setDesc("相对于 vault 根目录的路径")
       .addText(t => t.setPlaceholder("01.读书笔记/费曼笔记").setValue(this.plugin.settings.notesFolder)
-        .onChange(async v => { this.plugin.settings.notesFolder = v; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("概念索引文件").setDesc("费曼学习索引文件的路径")
+        .onChange(async v => { this.plugin.settings.notesFolder = v; await this.plugin.saveSettings(); this.display(); }));
+
+    // Folder status + one-click create
+    const folderPath = this.plugin.settings.notesFolder;
+    const folderExists = !!this.app.vault.getAbstractFileByPath(folderPath);
+    const folderStatusSetting = new Setting(containerEl)
+      .setName("文件夹状态")
+      .setDesc(folderExists ? "✓ 文件夹已存在" : "✗ 文件夹不存在，点击右侧按钮创建");
+    if (!folderExists) {
+      folderStatusSetting.addButton(b => b.setButtonText("一键创建").setCta().onClick(async () => {
+        try {
+          await this.app.vault.createFolder(folderPath);
+          new Notice(`文件夹「${folderPath}」已创建 ✓`);
+          this.display();
+        } catch (e: any) { new Notice(`创建失败：${e.message}`); }
+      }));
+    }
+
+    new Setting(containerEl).setName("概念索引文件").setDesc("费曼学习索引文件的路径（可选）")
       .addText(t => t.setPlaceholder("01.读书笔记/费曼学习索引.md").setValue(this.plugin.settings.indexFile)
         .onChange(async v => { this.plugin.settings.indexFile = v; await this.plugin.saveSettings(); }));
 
