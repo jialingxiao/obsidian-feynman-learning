@@ -2,6 +2,26 @@
 
 All notable changes to **Feynman Learning** are documented here.
 
+## [1.2.0] — 2026-05-08
+
+### Added
+- **First-use onboarding card** — when no API key is configured, the panel shows a guided setup card with step-by-step instructions and an "Open Settings" button instead of an empty dashboard
+- **Notes folder self-check** — Settings now shows a live ✓/✗ status for the configured notes folder; a "一键创建" button appears when the folder is missing
+- **Mobile & touch support** — `@media (pointer: coarse)` raises all buttons to 44 px minimum tap targets; `@media (max-width: 480px)` fixes iOS auto-zoom on inputs (font-size forced to 1 rem), reduces card padding, and stacks review/queue button rows on narrow screens
+
+### Fixed
+- **iOS Safari auto-zoom** — text inputs and textareas previously used `font-size: 0.88rem` (≈ 14 px), triggering unwanted zoom on focus; now clamped to `1rem` on narrow screens
+- **Settings "Open Settings" button on mobile** — gracefully falls back to a Notice with manual navigation instructions when Obsidian's private settings API is unavailable
+
+### Changed
+- **`tags` frontmatter format** — new notes now write `tags` as a YAML block list (`tags:\n  - 费曼学习法`) instead of an inline flow sequence (`tags: [费曼学习法]`), which Obsidian's core tag system and Dataview both handle more reliably
+- **`getAllConcepts()` is now cached** — result is memoised and invalidated automatically via `vault.on('create'/'delete'/'rename')` and `metadataCache.on('changed')`; repeated calls within a render cycle no longer re-scan the vault
+- **Unified AI button error handling** — all AI-triggered buttons (`judgeBtn`, `summaryBtn`, `evalBtn`, `submitBtn`, `继续追问`) now go through a single `withAiBtn` helper that disables the button during the request, logs failures to `console.error`, and shows a `Notice`; a new `keepDisabledOnSuccess` option handles buttons whose post-success state differs from the default
+
+### Refactored
+- **`parseReviewVerdict()` and `parseExtractedConcepts()`** extracted from `main.ts` into `utils.ts` as pure functions; both use JSON-first parsing with regex/text fallback
+- **Unit tests expanded** — 19 → 30 tests; new tests cover JSON, fenced-markdown, invalid-score, and all fallback paths; `console.warn` calls in fallback tests are silenced via `jest.spyOn`
+
 ## [1.1.0] — 2026-05-07
 
 ### Added
