@@ -280,7 +280,7 @@ class FeynmanView extends ItemView {
     const steps = card.createEl("ol", { cls: "feynman-onboarding-steps" });
     [
       "打开 设置 → 社区插件 → 费曼学习法",
-      "填写 API Key（推荐 DeepSeek，性价比高；也支持 OpenAI / 本地 Ollama 等）",
+      "填写 API key（推荐 DeepSeek，性价比高；也支持 OpenAI / 本地 Ollama 等）",
       "点击「测试连接」确认配置正确",
       "回到这里，输入第一个你想学习的概念！",
     ].forEach(text => steps.createEl("li", { text }));
