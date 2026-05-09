@@ -642,7 +642,7 @@ class FeynmanView extends ItemView {
               ? `「${item.concept}」已升级为「${nextMastery}」，${actualNextDays} 天后再提醒${allPerfect ? " 🎉" : ""}`
               : `「${item.concept}」已达到精通！🎉`
             );
-            done();
+            void done();
           });
 
           if (partialPass) {
@@ -655,7 +655,7 @@ class FeynmanView extends ItemView {
             await this.plugin.markReviewed(item.file, item.reviewCount, false);
             await this.saveFailedReviewToNote(item.file, lastDimensions, lastEvalText);
             new Notice(`「${item.concept}」明天再复习一次`);
-            done();
+            void done();
           });
           this.btn(actionRow, "🎯 专项练习", "secondary", async () => {
             await this.renderWeakPointDrill(resultEl, item.concept, lastDimensions);
@@ -916,7 +916,7 @@ class FeynmanView extends ItemView {
   }
 
   private async doAskAI(parent: HTMLElement) {
-    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 API Key"); return; }
+    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 API key"); return; }
     this.state.aiHistory = [
       { role: "system", content: "你是一个对所有领域都一无所知的普通人，正在听别人解释一个概念。基于对方的解释，找出最让你困惑的地方，提出1-2个追问。用口语化语气，真的从不懂的角度提问，不评价，用中文。" },
       { role: "user", content: `我在解释的概念是：${this.state.concept}\n\n我的解释是：\n${this.state.explanation}` },
@@ -1153,7 +1153,7 @@ class FeynmanView extends ItemView {
   // ─── Step 5: Quiz ─────────────────────────────────────────────────────────
 
   private async startQuiz(parent: HTMLElement) {
-    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 API Key"); return; }
+    if (!this.plugin.settings.apiKey) { new Notice("请先在插件设置中填写 API key"); return; }
     const btn = parent.querySelector(".feynman-btn-warn") as HTMLButtonElement;
     if (btn) { btn.disabled = true; btn.textContent = "出题中…"; }
     try {
@@ -1629,14 +1629,14 @@ class FeynmanSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("AI 设置").setHeading();
     new Setting(containerEl).setName("API key").setDesc("DeepSeek / OpenAI / 其他兼容服务的 API key")
-      .addText(t => t.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey)
+      .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.apiKey)
         .then(t => { t.inputEl.type = "password"; })
         .onChange(v => { this.plugin.settings.apiKey = v; void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("API base URL").setDesc("兼容 OpenAI 格式的接口地址")
-      .addText(t => t.setPlaceholder("https://api.deepseek.com/v1").setValue(this.plugin.settings.apiBase)
+      .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.apiBase)
         .onChange(v => { this.plugin.settings.apiBase = v.trim(); void this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("模型名称").setDesc("例如 deepseek-chat、gpt-4o、claude-3-5-sonnet-20241022")
-      .addText(t => t.setPlaceholder("deepseek-chat").setValue(this.plugin.settings.model)
+    new Setting(containerEl).setName("模型名称").setDesc("例如 deepseek-chat、GPT-4o、Claude-3-5-sonnet-20241022")
+      .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.model)
         .onChange(v => { this.plugin.settings.model = v.trim(); void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("Temperature").setDesc("生成随机性，0 最保守，1 最发散（默认 0.8）")
       .addSlider(s => s.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip()
@@ -1703,8 +1703,8 @@ class FeynmanSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Notion 同步").setHeading();
     containerEl.createEl("p", { cls: "feynman-settings-desc", text: "填写后保存笔记时自动同步到 Notion，留空则不同步。" });
-    new Setting(containerEl).setName("Notion integration token").setDesc("在 notion.so/my-integrations 创建集成后获取")
-      .addText(t => t.setPlaceholder("secret_...").setValue(this.plugin.settings.notionToken)
+    new Setting(containerEl).setName("Notion integration token").setDesc("在 Notion.so/my-integrations 创建集成后获取")
+      .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.notionToken)
         .then(t => { t.inputEl.type = "password"; })
         .onChange(v => { this.plugin.settings.notionToken = v; void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("Notion 数据库 ID").setDesc("填写后可同步到你的 Notion 数据库")
