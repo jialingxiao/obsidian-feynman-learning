@@ -41,7 +41,8 @@ export function truncate(text: string, max = 1900): string {
 
 export function parseApiError(status: number, body: Record<string, unknown>): string {
   const errObj = body?.error as Record<string, unknown> | undefined;
-  const msg: string = String(errObj?.message ?? body?.message ?? "");
+  const rawMsg = errObj?.message ?? body?.message;
+  const msg: string = typeof rawMsg === "string" ? rawMsg : "";
   if (status === 401) return "API Key 无效或已过期，请检查设置中的 Key";
   if (status === 403) return "无权限访问该模型，请检查 Key 或模型名称";
   if (status === 404) return "接口地址或模型不存在，请检查 API Base URL 和模型名称";
@@ -67,9 +68,9 @@ export function parseReviewVerdict(text: string): ReviewVerdict {
         return {
           passed: !!raw.passed,
           dimensions: (raw.dimensions as { label?: unknown; score?: unknown; note?: unknown }[]).map(d => ({
-            label: String(d.label ?? ""),
+            label: typeof d.label === "string" ? d.label : "",
             score: (["✓", "△", "✗"].includes(String(d.score)) ? String(d.score) : "✗") as "✓" | "△" | "✗",
-            note: String(d.note ?? ""),
+            note: typeof d.note === "string" ? d.note : "",
           })),
           feedback: String(raw.feedback ?? ""),
         };
@@ -100,7 +101,7 @@ export function parseExtractedConcepts(text: string): ExtractedConcept[] {
       if (Array.isArray(raw) && raw.length > 0) {
         const concepts = (raw as { name?: unknown; reason?: unknown }[])
           .filter(c => c?.name)
-          .map(c => ({ name: String(c.name).trim(), reason: String(c.reason ?? "").trim() }))
+          .map(c => ({ name: (typeof c.name === "string" ? c.name : "").trim(), reason: (typeof c.reason === "string" ? c.reason : "").trim() }))
           .filter(c => c.name.length > 0)
           .slice(0, 8);
         if (concepts.length > 0) return concepts;

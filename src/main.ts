@@ -531,7 +531,7 @@ class FeynmanView extends ItemView {
     });
   }
 
-  private async renderReviewSession(wrap: HTMLElement, item: DueConcept, onComplete?: () => void) {
+  private async renderReviewSession(wrap: HTMLElement, item: DueConcept, onComplete?: () => void | Promise<void>) {
     const done = onComplete ?? (() => this.render());
     wrap.querySelector(".feynman-review-session")?.remove();
     const session = wrap.createDiv("feynman-review-session");
@@ -686,7 +686,7 @@ class FeynmanView extends ItemView {
       info.createSpan({ cls: "feynman-history-name", text: c.concept });
       info.createSpan({ cls: "feynman-history-meta", text: `${c.date}  ·  ${c.mastery}` });
       row.createDiv({ cls: `feynman-mastery-tag feynman-mastery-${c.mastery}`, text: c.mastery });
-      row.addEventListener("click", () => this.app.workspace.getLeaf("tab").openFile(c.file));
+      row.addEventListener("click", () => { void this.app.workspace.getLeaf("tab").openFile(c.file); });
     }
   }
 
@@ -724,7 +724,7 @@ class FeynmanView extends ItemView {
         warn.createDiv({ cls: "feynman-hint", text: `已有「${name}」的学习笔记（当前掌握：${existing.mastery}）` });
         const warnRow = this.btnRow(warn);
         this.btn(warnRow, "打开原笔记", "secondary", () => {
-          this.app.workspace.getLeaf("tab").openFile(existing.file);
+          void this.app.workspace.getLeaf("tab").openFile(existing.file);
           warn.remove();
         });
         const isDue = this.plugin.getDueConcepts().find(d => d.file.path === existing.file.path);
@@ -786,11 +786,13 @@ class FeynmanView extends ItemView {
         const headerRow = results.createDiv("feynman-extract-header");
         headerRow.createDiv({ cls: "feynman-ai-label", text: `提取到 ${concepts.length} 个概念` });
         const addAllBtn = headerRow.createEl("button", { cls: "feynman-btn feynman-btn-secondary feynman-extract-add-all", text: "全部加入队列" });
-        addAllBtn.addEventListener("click", async () => {
-          for (const c of concepts) await this.plugin.addToQueue(c.name);
-          addAllBtn.textContent = `✓ 已加入 ${concepts.length} 个`;
-          addAllBtn.disabled = true;
-          new Notice(`已将 ${concepts.length} 个概念加入学习队列`);
+        addAllBtn.addEventListener("click", () => {
+          void (async () => {
+            for (const c of concepts) await this.plugin.addToQueue(c.name);
+            addAllBtn.textContent = `✓ 已加入 ${concepts.length} 个`;
+            addAllBtn.disabled = true;
+            new Notice(`已将 ${concepts.length} 个概念加入学习队列`);
+          })();
         });
         for (const c of concepts) {
           const chip = results.createDiv({ cls: "feynman-extract-chip" });
@@ -800,11 +802,13 @@ class FeynmanView extends ItemView {
           info.addEventListener("click", () => { nameInp.value = c.name; nameInp.scrollIntoView({ behavior: "smooth" }); });
           const addBtn = chip.createEl("button", { cls: "feynman-btn feynman-extract-add", text: "＋" });
           addBtn.title = "加入学习队列";
-          addBtn.addEventListener("click", async (e) => {
+          addBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            await this.plugin.addToQueue(c.name);
-            addBtn.textContent = "✓";
-            addBtn.disabled = true;
+            void (async () => {
+              await this.plugin.addToQueue(c.name);
+              addBtn.textContent = "✓";
+              addBtn.disabled = true;
+            })();
           });
         }
       });
@@ -873,7 +877,7 @@ class FeynmanView extends ItemView {
         const rStat = this.plugin.getConceptReviewStats(c.concept);
         if (rStat.total > 0) right.createDiv({ cls: "feynman-browser-rate", text: rStat.rate });
         right.createDiv({ cls: `feynman-mastery-tag feynman-mastery-${c.mastery}`, text: c.mastery });
-        row.addEventListener("click", () => this.app.workspace.getLeaf("tab").openFile(c.file));
+        row.addEventListener("click", () => { void this.app.workspace.getLeaf("tab").openFile(c.file); });
       }
     };
 
@@ -1096,7 +1100,7 @@ class FeynmanView extends ItemView {
     this.btn(row, "💾 保存到 vault", "primary", () => { this.showSavePreview(card, parent); });
     this.btn(row, "🧪 AI 测验", "warn", async () => { await this.startQuiz(parent); });
     this.btn(row, "📋 复制", "secondary", () => {
-      navigator.clipboard.writeText(this.buildNoteContent(moment().format("YYYY-MM-DD")));
+      void navigator.clipboard.writeText(this.buildNoteContent(moment().format("YYYY-MM-DD")));
       new Notice("笔记已复制到剪贴板");
     });
     this.btn(row, "🔗 概念关联", "secondary", async () => {
@@ -1273,7 +1277,7 @@ ${quizSection}
     const content = this.buildNoteContent(date);
     const existing = vault.getAbstractFileByPath(filename);
     const isNew = !(existing instanceof TFile);
-    isNew ? await vault.create(filename, content) : await vault.modify(existing, content);
+    if (isNew) { await vault.create(filename, content); } else { await vault.modify(existing, content); }
     this.state.savedStem = stem;
 
     if (isNew) {
@@ -1360,7 +1364,8 @@ ${quizSection}
     });
     if (resp.status >= 400) {
       const err = (resp.json ?? {}) as Record<string, unknown>;
-      throw new Error(String(err.message || `Notion 返回 ${resp.status}：请检查数据库字段名是否与插件设置一致`));
+      const errMsg = typeof err.message === "string" ? err.message : `Notion 返回 ${resp.status}：请检查数据库字段名是否与插件设置一致`;
+      throw new Error(errMsg);
     }
   }
 
@@ -1528,7 +1533,7 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
     if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
     const filename = `${folder}/${weekStr}.md`;
     const existing = vault.getAbstractFileByPath(filename);
-    existing instanceof TFile ? await vault.modify(existing, content) : await vault.create(filename, content);
+    if (existing instanceof TFile) { await vault.modify(existing, content); } else { await vault.create(filename, content); }
     const file = vault.getAbstractFileByPath(filename);
     if (file instanceof TFile) await this.app.workspace.getLeaf("tab").openFile(file);
     new Notice(`周报已生成 ✓`);
@@ -1577,7 +1582,7 @@ ${aiReflection ? `\n## AI 学习反思\n\n${aiReflection}\n` : ""}`;
         const item = grid.createDiv("feynman-connection-item");
         const match = this.plugin.getAllConcepts().find(c => c.concept === conn.name);
         const nameEl = item.createDiv({ cls: `feynman-connection-name${match ? " feynman-connection-link" : ""}`, text: conn.name });
-        if (match) nameEl.addEventListener("click", () => this.app.workspace.getLeaf("tab").openFile(match.file));
+        if (match) nameEl.addEventListener("click", () => { void this.app.workspace.getLeaf("tab").openFile(match.file); });
         item.createDiv({ cls: "feynman-connection-desc", text: conn.desc });
       }
 
@@ -1642,8 +1647,8 @@ class FeynmanSettingTab extends PluginSettingTab {
         if (!apiKey) { new Notice("请先填写 API key"); return; }
         b.setButtonText("测试中…").setDisabled(true);
         try {
-          const data = await this.plugin.requestAI([{ role: "user", content: "Hi" }], 1) as Record<string, unknown>;
-          new Notice(`✓ 连接成功（模型：${String(data?.model ?? model)}）`);
+          const data = await this.plugin.requestAI([{ role: "user", content: "Hi" }], 1);
+          new Notice(`✓ 连接成功（模型：${typeof data.model === "string" ? data.model : model}）`);
         } catch (e) {
           new Notice(`✗ ${e instanceof Error ? e.message : String(e)}`);
         } finally {
@@ -1801,7 +1806,7 @@ export default class FeynmanPlugin extends Plugin {
       editorCallback: (editor: Editor) => {
         const selected = editor.getSelection().trim();
         if (!selected) { new Notice("请先选中一段文字"); return; }
-        this.activateView().then(() => {
+        void this.activateView().then(() => {
           const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
           if (leaves.length > 0) (leaves[0].view as FeynmanView).loadConcept(selected);
         });
@@ -1825,7 +1830,7 @@ export default class FeynmanPlugin extends Plugin {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) return;
     await leaf.setViewState({ type: VIEW_TYPE, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    void this.app.workspace.revealLeaf(leaf);
   }
 
   async requestAI(messages: { role: string; content: string }[], maxTokens = 800): Promise<Record<string, unknown>> {
@@ -1917,9 +1922,9 @@ export default class FeynmanPlugin extends Plugin {
   async markReviewed(file: TFile, currentCount: number, passed: boolean, partialPass = false, expertPass = false) {
     const newCount = passed ? currentCount + 1 : currentCount;
     const nextInterval = calcNextInterval(currentCount, passed, partialPass, expertPass, this.settings.reviewIntervals);
-    const nextDate = (passed && nextInterval === null)
+    const nextDate = nextInterval === null
       ? "completed"
-      : moment().add(nextInterval!, "days").format("YYYY-MM-DD");
+      : moment().add(nextInterval, "days").format("YYYY-MM-DD");
     const content = await this.app.vault.read(file);
     const updated = content
       .replace(/^review_date: .+$/m, `review_date: ${nextDate}`)
