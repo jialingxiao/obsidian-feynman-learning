@@ -272,7 +272,7 @@ class FeynmanView extends ItemView {
   private renderOnboarding(parent: HTMLElement) {
     const card = parent.createDiv("feynman-card feynman-onboarding");
 
-    card.createEl("div", { cls: "feynman-onboarding-icon", text: "🧠" });
+    card.createDiv({ cls: "feynman-onboarding-icon", text: "🧠" });
     card.createEl("h2", { cls: "feynman-onboarding-title", text: "欢迎使用费曼学习法！" });
     card.createEl("p", { cls: "feynman-onboarding-desc", text: "用「教会别人」的方式深度学习任何概念，AI 帮你找漏洞、做复习。" });
 
@@ -477,7 +477,7 @@ class FeynmanView extends ItemView {
         });
         // Auto-open if triggered by "复习当前笔记" command
         if (pendingPath && item.file.path === pendingPath) {
-          setTimeout(() => startBtn.click(), 150);
+          activeWindow.setTimeout(() => startBtn.click(), 150);
         }
       }
     }
@@ -733,7 +733,7 @@ class FeynmanView extends ItemView {
             warn.remove();
             // Scroll the dashboard back to the due-review list
             this.render();
-            setTimeout(() => {
+            activeWindow.setTimeout(() => {
               const el = this.containerEl.querySelector(".feynman-review-card");
               el?.scrollIntoView({ behavior: "smooth" });
             }, 100);
