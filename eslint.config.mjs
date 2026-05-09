@@ -2,7 +2,7 @@ import obsidianmd from "eslint-plugin-obsidianmd";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
 
-const BRANDS = ["iOS","iPadOS","macOS","Windows","Android","Linux","Obsidian","Obsidian Sync","Obsidian Publish","Google","Gemini","Vertex AI","OpenAI","GPT","Anthropic","Claude","Microsoft","Google Drive","Dropbox","OneDrive","iCloud Drive","YouTube","Slack","Discord","Telegram","WhatsApp","Twitter","X","Readwise","Zotero","Excalidraw","Mermaid","Markdown","LaTeX","JavaScript","TypeScript","Node.js","npm","pnpm","Yarn","Git","GitHub","GitLab","Notion","Evernote","Roam Research","Logseq","Anki","Reddit","VS Code","Visual Studio Code","IntelliJ IDEA","WebStorm","PyCharm","React","Svelte","CalDAV","CardDAV","WebDAV","Feynman","Feynman Learning","Ollama"];
+const BRANDS = ["iOS","iPadOS","macOS","Windows","Android","Linux","Obsidian","Obsidian Sync","Obsidian Publish","Google","Gemini","Vertex AI","OpenAI","GPT","Anthropic","Claude","Microsoft","Google Drive","Dropbox","OneDrive","iCloud Drive","YouTube","Slack","Discord","Telegram","WhatsApp","Twitter","X","Readwise","Zotero","Excalidraw","Mermaid","Markdown","LaTeX","JavaScript","TypeScript","Node.js","npm","pnpm","Yarn","Git","GitHub","GitLab","Notion","Evernote","Roam Research","Logseq","Anki","Reddit","VS Code","Visual Studio Code","IntelliJ IDEA","WebStorm","PyCharm","React","Svelte","CalDAV","CardDAV","WebDAV","Feynman","Feynman Learning","Ollama","DeepSeek"];
 
 export default [
   {
@@ -14,8 +14,8 @@ export default [
     },
     rules: {
       // ── obsidianmd rules (from recommended config) ──────────────────────────
-      "obsidianmd/ui/sentence-case": ["error", { "brands": BRANDS }],
-      "obsidianmd/ui/sentence-case-json": ["error", { "brands": BRANDS }],
+      "obsidianmd/ui/sentence-case": ["error", { "brands": BRANDS, "enforceCamelCaseLower": true }],
+      "obsidianmd/ui/sentence-case-json": ["error", { "brands": BRANDS, "enforceCamelCaseLower": true }],
       "obsidianmd/commands/no-command-in-command-id": "error",
       "obsidianmd/commands/no-command-in-command-name": "error",
       "obsidianmd/commands/no-default-hotkeys": "error",
@@ -64,7 +64,7 @@ export default [
     files: ["manifest.json"],
     plugins: { obsidianmd },
     rules: {
-      "obsidianmd/ui/sentence-case-json": ["error", { "brands": BRANDS }],
+      "obsidianmd/ui/sentence-case-json": ["error", { "brands": BRANDS, "enforceCamelCaseLower": true }],
     },
   },
 ];

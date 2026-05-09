@@ -1628,14 +1628,14 @@ class FeynmanSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("费曼学习法 设置").setHeading();
 
     new Setting(containerEl).setName("AI 设置").setHeading();
-    new Setting(containerEl).setName("API key").setDesc("DeepSeek / OpenAI / 其他兼容服务的 API key")
+    new Setting(containerEl).setName("API key").setDesc("兼容 OpenAI 格式的 API key")
       .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.apiKey)
         .then(t => { t.inputEl.type = "password"; })
         .onChange(v => { this.plugin.settings.apiKey = v; void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("API base URL").setDesc("兼容 OpenAI 格式的接口地址")
       .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.apiBase)
         .onChange(v => { this.plugin.settings.apiBase = v.trim(); void this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName("模型名称").setDesc("例如 deepseek-chat、GPT-4o、Claude-3-5-sonnet-20241022")
+    new Setting(containerEl).setName("模型名称").setDesc("例如 DeepSeek-chat、GPT-4o、Claude-3-5-sonnet-20241022")
       .addText(t => t.setPlaceholder("").setValue(this.plugin.settings.model)
         .onChange(v => { this.plugin.settings.model = v.trim(); void this.plugin.saveSettings(); }));
     new Setting(containerEl).setName("Temperature").setDesc("生成随机性，0 最保守，1 最发散（默认 0.8）")
