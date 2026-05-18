@@ -273,7 +273,7 @@ class FeynmanView extends ItemView {
     const card = parent.createDiv("feynman-card feynman-onboarding");
 
     card.createDiv({ cls: "feynman-onboarding-icon", text: "🧠" });
-    card.createEl("h2", { cls: "feynman-onboarding-title", text: "欢迎使用费曼学习法！" });
+    card.createDiv({ cls: "feynman-onboarding-title", text: "欢迎使用费曼学习法！" });
     card.createEl("p", { cls: "feynman-onboarding-desc", text: "用「教会别人」的方式深度学习任何概念，AI 帮你找漏洞、做复习。" });
 
     card.createEl("p", { cls: "feynman-settings-desc", text: "开始之前，先完成一次性配置：" });
@@ -1826,11 +1826,16 @@ export default class FeynmanPlugin extends Plugin {
   }
 
   async activateView() {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-    const leaf = this.app.workspace.getRightLeaf(false);
+    const { workspace } = this.app;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE);
+    if (leaves.length > 0) {
+      void workspace.revealLeaf(leaves[0]);
+      return;
+    }
+    const leaf = workspace.getRightLeaf(false);
     if (!leaf) return;
     await leaf.setViewState({ type: VIEW_TYPE, active: true });
-    void this.app.workspace.revealLeaf(leaf);
+    void workspace.revealLeaf(leaf);
   }
 
   async requestAI(messages: { role: string; content: string }[], maxTokens = 800): Promise<Record<string, unknown>> {
