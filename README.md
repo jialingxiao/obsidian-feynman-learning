@@ -67,9 +67,9 @@ Learn anything deeply using the **Feynman Technique**: explain it simply, find t
 3. Copy the three files into that folder
 4. Enable **Feynman Learning** in **Settings → Community Plugins**
 
-### Option C — Community Plugin browser *(coming soon)*
+### Option C — Community Plugin browser
 
-The plugin is being prepared for submission to Obsidian's official community plugin list.
+Search for **Feynman Learning** in **Settings → Community Plugins → Browse**.
 
 ## Setup
 

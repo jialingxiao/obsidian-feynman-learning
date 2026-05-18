@@ -205,7 +205,6 @@
 .feynman-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
 /* History */
-.feynman-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 10px; }
 .feynman-history-item { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer; gap: 10px; transition: opacity 0.15s; }
 .feynman-history-item:hover { opacity: 0.75; }
 .feynman-history-item:last-child { border-bottom: none; }
@@ -213,7 +212,7 @@
 .feynman-history-name { font-size: 0.9rem; font-weight: 500; display: block; }
 .feynman-history-meta { font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 2px; }
 .feynman-mastery-tag { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; flex-shrink: 0; }
-.feynman-mastery-初识 { background: #eee; color: #666; }
+.feynman-mastery-初识 { background: #eeeeee; color: #666666; }
 .feynman-mastery-理解 { background: #fff3e0; color: #e07b39; }
 .feynman-mastery-掌握 { background: #e3f0fb; color: #1a6fa8; }
 .feynman-mastery-精通 { background: #e8f5e9; color: #2d6a4f; }
@@ -238,7 +237,7 @@
 
 /* Section header */
 .feynman-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.feynman-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 0; }
+.feynman-section-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 0 0 10px; }
 
 /* Recommendations */
 .feynman-rec-wrap { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--background-modifier-border); }
@@ -307,7 +306,7 @@
 .feynman-extract-toggle.open .feynman-extract-toggle-label { color: var(--color-accent); }
 .feynman-extract-body { margin-top: 10px; }
 .feynman-extract-results { margin-top: 10px; display: grid; gap: 6px; }
-.feynman-extract-chip { padding: 8px 12px; border-radius: 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); cursor: pointer; transition: all 0.15s; }
+.feynman-extract-chip { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); cursor: pointer; transition: all 0.15s; }
 .feynman-extract-chip:hover { border-color: var(--color-accent); }
 .feynman-extract-name { font-weight: 600; font-size: 0.88rem; display: block; }
 .feynman-extract-reason { font-size: 0.78rem; color: var(--text-muted); display: block; margin-top: 2px; }
@@ -326,11 +325,11 @@
 .feynman-dim-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 10px; border-radius: 6px; background: var(--background-primary); }
 .feynman-dim-item.dim-pass { border-left: 3px solid #2d6a4f; }
 .feynman-dim-item.dim-partial { border-left: 3px solid #e07b39; }
-.feynman-dim-item.dim-fail { border-left: 3px solid #aaa; }
+.feynman-dim-item.dim-fail { border-left: 3px solid #aaaaaa; }
 .feynman-dim-score { font-size: 1rem; font-weight: 700; flex-shrink: 0; width: 18px; }
 .feynman-dim-item.dim-pass .feynman-dim-score { color: #2d6a4f; }
 .feynman-dim-item.dim-partial .feynman-dim-score { color: #e07b39; }
-.feynman-dim-item.dim-fail .feynman-dim-score { color: #aaa; }
+.feynman-dim-item.dim-fail .feynman-dim-score { color: #aaaaaa; }
 .feynman-dim-right { display: flex; flex-direction: column; gap: 2px; }
 .feynman-dim-label { font-size: 0.8rem; font-weight: 600; color: var(--text-normal); }
 .feynman-dim-note { font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
@@ -363,7 +362,6 @@
 /* Extract chip layout with add button */
 .feynman-extract-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .feynman-extract-add-all { font-size: 0.75rem; padding: 3px 8px; }
-.feynman-extract-chip { display: flex; align-items: center; gap: 8px; }
 .feynman-extract-chip-info { flex: 1; cursor: pointer; padding: 8px 12px; border-radius: 8px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); transition: all 0.15s; }
 .feynman-extract-chip-info:hover { border-color: var(--color-accent); }
 .feynman-extract-add { padding: 4px 8px; font-size: 0.85rem; border-radius: 6px; flex-shrink: 0; min-width: 32px; }
